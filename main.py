@@ -63,7 +63,7 @@ class ElasticLogViewerUltra:
         # --- UI SETUP: Текстовая область с логами ---
         self.txt_f = ttk.Frame(root); self.txt_f.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         v_sc = ttk.Scrollbar(self.txt_f); v_sc.pack(side=tk.RIGHT, fill=tk.Y)
-        self.txt = tk.Text(self.txt_f, bg="white", fg="black", padx=15, pady=10, wrap=tk.WORD, borderwidth=0, undo=False, yscrollcommand=v_sc.set)
+        self.txt = tk.Text(self.txt_f, bg="white", fg="black", padx=15, pady=10, wrap=tk.CHAR, borderwidth=0, undo=False, yscrollcommand=v_sc.set)
         self.txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); v_sc.config(command=self.txt.yview)
 
         # --- UI SETUP: Нижняя панель (Фильтр и Статус) ---
