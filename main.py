@@ -18,7 +18,7 @@ class ElasticLogViewerUltra:
         self.load_config()
 
         # --- UI SETUP: Верхняя панель управления ---
-        top = ttk.Frame(root, padding=5); top.pack(side=tk.TOP, fill=tk.X)
+        top = ttk.Frame(root, padding=(0, 5)); top.pack(side=tk.TOP, fill=tk.X)
 
         # Ряд 1: URL, Индекс и настройки размеров шрифта
         r1 = ttk.Frame(top)
@@ -85,8 +85,9 @@ class ElasticLogViewerUltra:
         # --- UI SETUP: Текстовая область с логами ---
         self.txt_f = ttk.Frame(root); self.txt_f.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         v_sc = ttk.Scrollbar(self.txt_f); v_sc.pack(side=tk.RIGHT, fill=tk.Y)
-        self.txt = tk.Text(self.txt_f, bg="white", fg="black", padx=15, pady=10, wrap=tk.CHAR, borderwidth=0, undo=False, yscrollcommand=v_sc.set)
-        self.txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); v_sc.config(command=self.txt.yview)
+        self.txt = tk.Text(self.txt_f, bg="white", fg="black", padx=0, pady=0, wrap=tk.CHAR, borderwidth=0, undo=False, yscrollcommand=v_sc.set)
+        self.txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 0));
+        v_sc.config(command=self.txt.yview)
 
         # --- UI SETUP: Нижняя панель (Фильтр и Статус) ---
         bot = ttk.Frame(root, padding=5); bot.pack(side=tk.BOTTOM, fill=tk.X)
