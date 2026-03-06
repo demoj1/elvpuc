@@ -1,9 +1,10 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, font as tkfont
-import requests, json, threading, queue, os, random
+import requests, json, threading, queue, os, random, hashlib
 
 class ElasticLogViewerUltra:
     def __init__(self, root):
+        # --- Инициализация окна и переменных ---
         self.root = root
         self.root.title("Elastic Log Viewer Pro - Ultra Configurable")
         self.root.geometry("1450x900")
@@ -16,10 +17,10 @@ class ElasticLogViewerUltra:
 
         self.load_config()
 
-        # --- UI SETUP ---
+        # --- UI SETUP: Верхняя панель управления ---
         top = ttk.Frame(root, padding=5); top.pack(side=tk.TOP, fill=tk.X)
 
-        # Row 1: ELK URL & Index
+        # Ряд 1: URL, Индекс и настройки размеров шрифта
         r1 = ttk.Frame(top); r1.pack(side=tk.TOP, fill=tk.X)
         self.url_ent = self._add_f(r1, "ELK URL:", self.conf.get('url', 'ELK base url'), 45, 0)
         self.idx_ent = self._add_f(r1, "Index:", self.conf.get('index', 'Index pattern'), 20, 2)
@@ -29,7 +30,7 @@ class ElasticLogViewerUltra:
         ttk.Label(r1, text="UI Sz:").grid(row=0, column=6, padx=(10, 2))
         tk.Spinbox(r1, from_=8, to=25, textvariable=self.ui_font_size, width=3, command=self.update_ui_font).grid(row=0, column=7)
 
-        # Row 2: Search Controls
+        # Ряд 2: Кнопка поиска, Лимит и Временные диапазоны
         r2 = ttk.Frame(top, padding=(0, 5, 0, 0)); r2.pack(side=tk.TOP, fill=tk.X)
         self.btn = ttk.Button(r2, text="SEARCH", command=self.start_fetch, width=10)
         self.btn.pack(side=tk.LEFT, padx=(5, 15))
@@ -44,26 +45,28 @@ class ElasticLogViewerUltra:
         self.t_to = ttk.Entry(r2, width=12); self.t_to.insert(0, self.conf.get('t_to', 'now'))
         self.t_to.pack(side=tk.LEFT, padx=2)
 
+        # Кнопки пресетов времени
         for label, val in [("5m", "now-5m"), ("15m", "now-15m"), ("30m", "now-30m"), ("1h", "now-1h"), ("3h", "now-3h"), ("12h", "now-12h"), ("24h", "now-24h")]:
             ttk.Button(r2, text=label, width=4, command=lambda v=val: self._set_time(v)).pack(side=tk.LEFT, padx=1)
 
+        # Кнопки массового раскрытия/сворачивания
         ttk.Button(r2, text="EXPAND ALL", command=lambda: self.bulk_expand(True)).pack(side=tk.RIGHT, padx=2)
         ttk.Button(r2, text="COLLAPSE ALL", command=lambda: self.bulk_expand(False)).pack(side=tk.RIGHT, padx=2)
 
-        # Row 3: Elastic Query
+        # Ряд 3: Поле основного запроса Elastic
         r3 = ttk.Frame(top, padding=(0, 5, 0, 0)); r3.pack(side=tk.TOP, fill=tk.X)
         ttk.Label(r3, text="Query:").pack(side=tk.LEFT)
         self.q_ent = ttk.Entry(r3); self.q_ent.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 0))
         self.q_ent.insert(0, self.conf.get('query', '*'))
         self.q_ent.bind("<Return>", lambda e: self.start_fetch())
 
-        # --- TEXT AREA ---
+        # --- UI SETUP: Текстовая область с логами ---
         self.txt_f = ttk.Frame(root); self.txt_f.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         v_sc = ttk.Scrollbar(self.txt_f); v_sc.pack(side=tk.RIGHT, fill=tk.Y)
         self.txt = tk.Text(self.txt_f, bg="white", padx=15, pady=10, wrap=tk.WORD, borderwidth=0, undo=False, yscrollcommand=v_sc.set)
         self.txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); v_sc.config(command=self.txt.yview)
 
-        # --- BOTTOM ---
+        # --- UI SETUP: Нижняя панель (Фильтр и Статус) ---
         bot = ttk.Frame(root, padding=5); bot.pack(side=tk.BOTTOM, fill=tk.X)
         ttk.Label(bot, text="Offline filter:").pack(side=tk.LEFT)
         self.f_var = tk.StringVar(value=self.conf.get('offline_filter', ''))
@@ -73,6 +76,7 @@ class ElasticLogViewerUltra:
         self.info_lbl.pack(side=tk.RIGHT, padx=10)
         ttk.Label(bot, textvariable=self.status_var, foreground="blue", font=("TkDefaultFont", 9, "bold")).pack(side=tk.RIGHT, padx=5)
 
+        # --- Привязка горячих клавиш ---
         self.update_ui_font(); self.check_queue()
         self.txt.bind("<Button-1>", self.on_text_click)
         self.txt.bind("<space>", self.add_highlighter)
@@ -81,6 +85,7 @@ class ElasticLogViewerUltra:
         self.root.bind("<Control-f>", lambda e: self.f_ent.focus_set())
         self.root.bind("<Control-s>", lambda e: [self.q_ent.focus_set(), "break"])
 
+    # --- Вспомогательные методы построения интерфейса ---
     def _add_f(self, p, t, d, w, c):
         ttk.Label(p, text=t).grid(row=0, column=c, padx=(5, 2))
         e = ttk.Entry(p, width=w); e.insert(0, d); e.grid(row=0, column=c+1); e.bind("<Return>", lambda x: self.start_fetch())
@@ -90,6 +95,7 @@ class ElasticLogViewerUltra:
         self.t_from.delete(0, tk.END); self.t_from.insert(0, v)
         self.t_to.delete(0, tk.END); self.t_to.insert(0, "now"); self.start_fetch()
 
+    # --- Работа с конфигурацией (Load/Save) ---
     def load_config(self):
         try:
             with open(self.config_file, 'r') as f: self.conf = json.load(f)
@@ -108,6 +114,7 @@ class ElasticLogViewerUltra:
         except: pass
         self.root.destroy()
 
+    # --- Управление шрифтами и стилями ---
     def update_ui_font(self):
         sz, u_sz = self.log_font_size.get(), self.ui_font_size.get()
         fname = "Iosevka" if "Iosevka" in tkfont.families() else "Monospace"
@@ -115,7 +122,6 @@ class ElasticLogViewerUltra:
         self.txt.config(font=(fname, sz))
         self.txt.tag_configure("header", background="#f2f2f2", font=(fname, sz, "bold"), spacing1=10, spacing3=5)
         self.txt.tag_configure("msg", font=(fname, sz), lmargin1=20, lmargin2=20)
-        for t, c in self.highlighters.items(): self.txt.tag_configure(f"hi_{t}", background=c)
         ttk.Style().configure(".", font=ui_f)
         self._apply_f_rec(self.root, ui_f)
         self.render_logs()
@@ -125,35 +131,72 @@ class ElasticLogViewerUltra:
         except: pass
         for c in w.winfo_children(): self._apply_f_rec(c, f)
 
+    # --- Атомарная подсветка (Highlighters) ---
+    def apply_highlighters(self):
+        # Удаляем только hi_ теги перед перекраской
+        for tag in list(self.txt.tag_names()):
+            if tag.startswith("hi_"): self.txt.tag_delete(tag)
+        for text, color in self.highlighters.items():
+            if not text: continue
+            # Хеширование имени тега для стабильности (emoji/спецсимволы)
+            t_name = f"hi_{hashlib.md5(text.encode('utf-8')).hexdigest()[:10]}"
+            self.txt.tag_configure(t_name, background=color)
+            start = "1.0"
+            while True:
+                # regexp=False — защита от SegFault на символах типа []()
+                start = self.txt.search(text, start, tk.END, nocase=True, regexp=False)
+                if not start: break
+                end = f"{start}+{len(text)}c"; self.txt.tag_add(t_name, start, end); start = end
+
+    # --- Отрисовка логов (Render Engine) ---
+    def render_logs(self):
+        try: pos = self.txt.yview()[0]
+        except: pos = 0.0
+        self.txt.config(state='normal')
+        # Очистка всех тегов перед удалением контента
+        for tag in list(self.txt.tag_names()):
+            if tag.startswith("hi_") or tag.startswith("h_"): self.txt.tag_delete(tag)
+        self.txt.delete("1.0", tk.END)
+
+        q = self.f_var.get().lower().split(); count = 0
+        for i, log in enumerate(self.all_logs):
+            full = (log['time'] + " " + log['msg']).lower()
+            # Логика офлайн фильтра (+ и -)
+            if not all((p[1:] in full if p.startswith('+') else p[1:] not in full if p.startswith('-') else p in full) for p in q): continue
+            count += 1
+            # Вставка заголовка с уникальным тегом h_{i}
+            self.txt.insert(tk.END, f" {'[-] ' if log['expanded'] else '[+] '} {log['time']} \n", ("header", f"h_{i}"))
+            disp = log['msg'] if log['expanded'] else "\n".join(log['msg'].splitlines()[:3]) + "\n... [COLLAPSED] ...\n"
+            self.txt.insert(tk.END, disp + "\n" + " —" * 40 + "\n", "msg")
+
+        self.apply_highlighters()
+        self.txt.config(state='disabled'); self.status_var.set(f"Showing: {count}/{len(self.all_logs)}")
+        self.txt.yview_moveto(pos)
+
+    # --- Обработчики пользовательских действий ---
     def add_highlighter(self, event):
         try:
-            for tag in self.txt.tag_names():
-                if tag.startswith("hi_") or tag.startswith("h_"):
-                    self.txt.tag_delete(tag)
             text = self.txt.get("sel.first", "sel.last").strip()
             if text and text not in self.highlighters:
                 color = "#%02x%02x%02x" % (random.randint(200,255), random.randint(200,255), random.randint(150,255))
                 self.highlighters[text] = color
-                self.txt.tag_configure(f"hi_{text}", background=color)
-                self.render_logs()
+                self.apply_highlighters()
         except: pass
+        return "break"
 
     def clear_highlighters(self, event):
-        for tag in self.txt.tag_names():
-            if tag.startswith("hi_") or tag.startswith("h_"):
-                self.txt.tag_delete(tag)
-        self.highlighters = {}; self.render_logs()
+        self.highlighters = {}; self.apply_highlighters(); return "break"
 
+    def bulk_expand(self, state):
+        for log in self.all_logs: log['expanded'] = state
+        self.render_logs()
+
+    # --- Работа с сетью (Elastic API) ---
     def start_fetch(self):
         if self.is_loading: return
-        self.is_loading, self.btn['state'] = True, 'disabled'
-        self.status_var.set("Fetching...")
-
-        base_url = self.url_ent.get().strip().rstrip('/')
-        if not base_url.startswith('http'): base_url = 'http://' + base_url
-
-        p = {"url": f"{base_url}/{self.idx_ent.get()}/_search",
-             "lim": self.lim_ent.get(), "q": self.q_ent.get(), "f": self.t_from.get(), "t": self.t_to.get()}
+        self.is_loading, self.btn['state'] = True, 'disabled'; self.status_var.set("Fetching...")
+        url = self.url_ent.get().strip().rstrip('/')
+        p = {"url": f"{url}/{self.idx_ent.get()}/_search", "lim": self.lim_ent.get(), "q": self.q_ent.get(), "f": self.t_from.get(), "t": self.t_to.get()}
         threading.Thread(target=self.worker, args=(p,), daemon=True).start()
 
     def worker(self, p):
@@ -162,8 +205,7 @@ class ElasticLogViewerUltra:
                     "query": {"bool": {"must": [{"query_string": {"query": p["q"]}}],
                     "filter": [{"range": {"@timestamp": {"gte": p["f"], "lte": p["t"]}}}]}}}
             r = requests.post(p["url"], json=body, timeout=10).json()
-            hits = [{"t": h['_source'].get('@timestamp', '---'), "m": h['_source'].get('message', json.dumps(h['_source'], indent=2))}
-                    for h in r.get('hits', {}).get('hits', [])]
+            hits = [{"t": h['_source'].get('@timestamp', '---'), "m": h['_source'].get('message', json.dumps(h['_source'], indent=2))} for h in r.get('hits', {}).get('hits', [])]
             self.data_queue.put(("OK", hits))
         except Exception as e: self.data_queue.put(("ERR", str(e)))
 
@@ -179,37 +221,8 @@ class ElasticLogViewerUltra:
         except queue.Empty: pass
         self.root.after(100, self.check_queue)
 
-    def render_logs(self):
-        try: pos = self.txt.yview()[0]
-        except: pos = 0.0
-        self.txt.config(state='normal'); self.txt.delete("1.0", tk.END);
-
-        q = self.f_var.get().lower().split(); count = 0
-        for i, log in enumerate(self.all_logs):
-            full = (log['time'] + " " + log['msg']).lower()
-            if not all((p[1:] in full if p.startswith('+') else p[1:] not in full if p.startswith('-') else p in full) for p in q): continue
-            count += 1
-            self.txt.insert(tk.END, f" {'[-] ' if log['expanded'] else '[+] '} {log['time']} \n", ("header", f"h_{i}"))
-            disp = log['msg'] if log['expanded'] else "\n".join(log['msg'].splitlines()[:3]) + "\n... [COLLAPSED] ...\n"
-            self.txt.insert(tk.END, disp + "\n" + " —" * 40 + "\n", "msg")
-
-        for text, color in self.highlighters.items():
-            tag_name = f"hi_{text}"
-            self.txt.tag_configure(tag_name, background=color)
-            start = "1.0"
-            while True:
-                start = self.txt.search(text, start, tk.END, nocase=True, regexp=False)
-                if not start: break
-                end = f"{start}+{len(text)}c"
-                self.txt.tag_add(tag_name, start, end); start = end
-        self.txt.config(state='disabled'); self.status_var.set(f"Showing: {count}/{len(self.all_logs)}")
-        self.txt.yview_moveto(pos)
-
-    def bulk_expand(self, state):
-        for log in self.all_logs: log['expanded'] = state
-        self.render_logs()
-
     def on_text_click(self, event):
+        # Определение тега h_ под кликом для Expand/Collapse
         for t in self.txt.tag_names(self.txt.index(f"@{event.x},{event.y}")):
             if t.startswith("h_"):
                 idx = int(t.split("_")[1])
