@@ -56,9 +56,16 @@ class ElasticLogViewerUltra:
         # Ряд 3: Поле основного запроса Elastic
         r3 = ttk.Frame(top, padding=(0, 5, 0, 0)); r3.pack(side=tk.TOP, fill=tk.X)
         ttk.Label(r3, text="Query:").pack(side=tk.LEFT)
-        self.q_ent = ttk.Entry(r3); self.q_ent.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 0))
-        self.q_ent.insert(0, self.conf.get('query', '*'))
-        self.q_ent.bind("<Return>", lambda e: self.start_fetch())
+
+        scrollbar = ttk.Scrollbar(r3)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.q_ent = tk.Text(r3, height=2, undo=True, maxundo=20, wrap=tk.WORD, yscrollcommand=scrollbar.set)
+        self.q_ent.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 0))
+        scrollbar.config(command=self.q_ent.yview)
+        self.q_ent.insert("1.0", self.conf.get('query', '*'))
+        self.q_ent.bind("<Control-Return>", lambda e: self.start_fetch() or "break")
+        self.q_ent.bind("<Command-Return>", lambda e: self.start_fetch() or "break")
 
         # --- UI SETUP: Текстовая область с логами ---
         self.txt_f = ttk.Frame(root); self.txt_f.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
@@ -112,7 +119,7 @@ class ElasticLogViewerUltra:
     # --- Вспомогательные методы построения интерфейса ---
     def _add_f(self, p, t, d, w, c):
         ttk.Label(p, text=t).grid(row=0, column=c, padx=(5, 2))
-        e = ttk.Entry(p, width=w); e.insert(0, d); e.grid(row=0, column=c+1); e.bind("<Return>", lambda x: self.start_fetch())
+        e = ttk.Entry(p, width=w); e.insert(0, d); e.grid(row=0, column=c+1);
         return e
 
     def _set_time(self, v):
@@ -132,7 +139,7 @@ class ElasticLogViewerUltra:
             if not os.path.exists(os.path.dirname(self.config_file)): os.makedirs(os.path.dirname(self.config_file))
             with open(self.config_file, 'w') as f:
                 json.dump({"url": self.url_ent.get(), "index": self.idx_ent.get(), "limit": self.lim_ent.get(),
-                           "query": self.q_ent.get(), "t_from": self.t_from.get(), "t_to": self.t_to.get(),
+                           "query": self.q_ent.get("1.0", "end-1c").strip(), "t_from": self.t_from.get(), "t_to": self.t_to.get(),
                            "offline_filter": self.f_var.get(), "log_sz": self.log_font_size.get(),
                            "ui_sz": self.ui_font_size.get(), "highlighters": self.highlighters}, f, indent=4)
         except: pass
@@ -220,7 +227,7 @@ class ElasticLogViewerUltra:
         if self.is_loading: return
         self.is_loading, self.btn['state'] = True, 'disabled'; self.status_var.set("Fetching...")
         url = self.url_ent.get().strip().rstrip('/')
-        p = {"url": f"{url}/{self.idx_ent.get()}/_search", "lim": self.lim_ent.get(), "q": self.q_ent.get(), "f": self.t_from.get(), "t": self.t_to.get()}
+        p = {"url": f"{url}/{self.idx_ent.get()}/_search", "lim": self.lim_ent.get(), "q": self.q_ent.get("1.0", "end-1c").strip(), "f": self.t_from.get(), "t": self.t_to.get()}
         threading.Thread(target=self.worker, args=(p,), daemon=True).start()
 
     def worker(self, p):
