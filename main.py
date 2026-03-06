@@ -85,6 +85,24 @@ class ElasticLogViewerUltra:
         self.root.bind("<Control-f>", lambda e: self.f_ent.focus_set())
         self.root.bind("<Control-s>", lambda e: [self.q_ent.focus_set(), "break"])
 
+        mods = ["Control", "Command"]
+        for cls in ("Entry", "TEntry", "Text"):
+            for m in mods:
+                for key in ("a", "A"):
+                    root.bind_class(cls, f"<{m}-{key}>", lambda e: (
+                        e.widget.select_range(0, 'end') if not isinstance(e.widget, tk.Text)
+                        else e.widget.tag_add("sel", "1.0", "end"), "break"
+                    ))
+
+                for key in ("c", "C"):
+                    root.bind_class(cls, f"<{m}-{key}>", lambda e: e.widget.event_generate("<<Copy>>"))
+
+                for key in ("v","V"):
+                    root.bind_class(cls, f"<{m}-{key}>", lambda e: e.widget.event_generate("<<Paste>>"))
+
+                for key in ("x", "X"):
+                    root.bind_class(cls, f"<{m}-{key}>", lambda e: e.widget.event_generate("<<Cut>>"))
+
     # --- Вспомогательные методы построения интерфейса ---
     def _add_f(self, p, t, d, w, c):
         ttk.Label(p, text=t).grid(row=0, column=c, padx=(5, 2))
