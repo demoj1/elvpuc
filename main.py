@@ -214,7 +214,7 @@ class ElasticLogViewerUltra:
             # Вставка заголовка с уникальным тегом h_{i}
             self.txt.insert(tk.END, f" {'[-] ' if log['expanded'] else '[+] '} {log['time']} \n", ("header", f"h_{i}"))
             disp = log['msg'] if log['expanded'] else "\n".join(log['msg'].splitlines()[:3]) + "\n... [COLLAPSED] ...\n"
-            self.txt.insert(tk.END, disp + "\n" + " —" * 40 + "\n", "msg")
+            self.txt.insert(tk.END, "\n" + disp + "\n\n", "msg")
 
         self.apply_highlighters()
         self.txt.config(state='disabled'); self.status_var.set(f"Showing: {count}/{len(self.all_logs)}")
