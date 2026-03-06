@@ -192,7 +192,7 @@ class ElasticLogViewerUltra:
                 if not start: break
                 end = f"{start}+{len(text)}c"
                 self.txt.tag_add(f"hi_{text}", start, end); start = end
-        self.txt.config(state='disabled'); self.status_var.set(f"Showing: {count}")
+        self.txt.config(state='disabled'); self.status_var.set(f"Showing: {count}/{len(self.all_logs)}")
         self.txt.yview_moveto(pos)
 
     def bulk_expand(self, state):
