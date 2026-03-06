@@ -84,8 +84,11 @@ class ElasticLogViewerUltra:
         self.txt.bind("<space>", self.add_highlighter)
         self.txt.bind("<Control-space>", self.clear_highlighters)
         self.root.bind("<Control-f>", lambda e: self.f_ent.focus_set())
+        self.root.bind("<Command-f>", lambda e: self.f_ent.focus_set())
         self.root.bind("<Control-s>", lambda e: [self.q_ent.focus_set(), "break"])
+        self.root.bind("<Command-s>", lambda e: [self.q_ent.focus_set(), "break"])
         self.root.bind("<Control-r>", lambda e: self.start_fetch())
+        self.root.bind("<Command-r>", lambda e: self.start_fetch())
         self.root.bind("<F5>", lambda e: self.start_fetch())
 
         mods = ["Control", "Command"]
