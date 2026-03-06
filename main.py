@@ -21,14 +21,29 @@ class ElasticLogViewerUltra:
         top = ttk.Frame(root, padding=5); top.pack(side=tk.TOP, fill=tk.X)
 
         # Ряд 1: URL, Индекс и настройки размеров шрифта
-        r1 = ttk.Frame(top); r1.pack(side=tk.TOP, fill=tk.X)
-        self.url_ent = self._add_f(r1, "ELK URL:", self.conf.get('url', 'ELK base url'), 50, 0)
-        self.idx_ent = self._add_f(r1, "Index:", self.conf.get('index', 'Index pattern'), 25, 2)
+        r1 = ttk.Frame(top)
+        r1.pack(side=tk.TOP, fill=tk.X)
 
-        ttk.Label(r1, text="Log font size:").grid(row=0, column=4, padx=(10, 2))
-        tk.Spinbox(r1, from_=8, to=40, textvariable=self.log_font_size, width=3, command=self.update_ui_font).grid(row=0, column=5)
-        ttk.Label(r1, text="UI font size:").grid(row=0, column=6, padx=(10, 2))
-        tk.Spinbox(r1, from_=8, to=25, textvariable=self.ui_font_size, width=3, command=self.update_ui_font).grid(row=0, column=7)
+        # --- ЛЕВАЯ ЧАСТЬ (URL и Индекс) ---
+        # Создаем под-фрейм для левой части и пакуем его СЛЕВА
+        left_parts = ttk.Frame(r1)
+        left_parts.pack(side=tk.LEFT, fill=tk.X)
+
+        # Твоя функция _add_f теперь работает внутри left_parts
+        self.url_ent = self._add_f(left_parts, "URL:", self.conf.get('url', '<url>'), 50, 0)
+        self.idx_ent = self._add_f(left_parts, "Index:", self.conf.get('index', '<index-pattern>'), 25, 2)
+
+        # --- ПРАВАЯ ЧАСТЬ (Шрифты) ---
+        # Создаем под-фрейм для правой части и пакуем его СПРАВА
+        right_parts = ttk.Frame(r1)
+        right_parts.pack(side=tk.RIGHT, padx=5)
+
+        # Используем grid внутри правого фрейма для компактности шрифтов
+        ttk.Label(right_parts, text="Log font size:").grid(row=0, column=0, padx=(10, 2))
+        tk.Spinbox(right_parts, from_=8, to=40, textvariable=self.log_font_size, width=3, command=self.update_ui_font).grid(row=0, column=1)
+
+        ttk.Label(right_parts, text="UI font size:").grid(row=0, column=2, padx=(10, 2))
+        tk.Spinbox(right_parts, from_=8, to=25, textvariable=self.ui_font_size, width=3, command=self.update_ui_font).grid(row=0, column=3)
 
         # Ряд 2: Кнопка поиска, Лимит и Временные диапазоны
         r2 = ttk.Frame(top, padding=(0, 5, 0, 0)); r2.pack(side=tk.TOP, fill=tk.X)
