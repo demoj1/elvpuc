@@ -22,17 +22,17 @@ class ElasticLogViewerUltra:
 
         # Ряд 1: URL, Индекс и настройки размеров шрифта
         r1 = ttk.Frame(top); r1.pack(side=tk.TOP, fill=tk.X)
-        self.url_ent = self._add_f(r1, "ELK URL:", self.conf.get('url', 'ELK base url'), 45, 0)
-        self.idx_ent = self._add_f(r1, "Index:", self.conf.get('index', 'Index pattern'), 20, 2)
+        self.url_ent = self._add_f(r1, "ELK URL:", self.conf.get('url', 'ELK base url'), 50, 0)
+        self.idx_ent = self._add_f(r1, "Index:", self.conf.get('index', 'Index pattern'), 25, 2)
 
-        ttk.Label(r1, text="Log Sz:").grid(row=0, column=4, padx=(10, 2))
+        ttk.Label(r1, text="Log font size:").grid(row=0, column=4, padx=(10, 2))
         tk.Spinbox(r1, from_=8, to=40, textvariable=self.log_font_size, width=3, command=self.update_ui_font).grid(row=0, column=5)
-        ttk.Label(r1, text="UI Sz:").grid(row=0, column=6, padx=(10, 2))
+        ttk.Label(r1, text="UI font size:").grid(row=0, column=6, padx=(10, 2))
         tk.Spinbox(r1, from_=8, to=25, textvariable=self.ui_font_size, width=3, command=self.update_ui_font).grid(row=0, column=7)
 
         # Ряд 2: Кнопка поиска, Лимит и Временные диапазоны
         r2 = ttk.Frame(top, padding=(0, 5, 0, 0)); r2.pack(side=tk.TOP, fill=tk.X)
-        self.btn = ttk.Button(r2, text="SEARCH", command=self.start_fetch, width=10)
+        self.btn = ttk.Button(r2, text="Search", command=self.start_fetch, width=10)
         self.btn.pack(side=tk.LEFT, padx=(5, 15))
 
         self.lim_ent = ttk.Entry(r2, width=6); self.lim_ent.insert(0, self.conf.get('limit', '250'))
@@ -50,8 +50,8 @@ class ElasticLogViewerUltra:
             ttk.Button(r2, text=label, width=4, command=lambda v=val: self._set_time(v)).pack(side=tk.LEFT, padx=1)
 
         # Кнопки массового раскрытия/сворачивания
-        ttk.Button(r2, text="EXPAND ALL", command=lambda: self.bulk_expand(True)).pack(side=tk.RIGHT, padx=2)
-        ttk.Button(r2, text="COLLAPSE ALL", command=lambda: self.bulk_expand(False)).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(r2, text="Expand all", command=lambda: self.bulk_expand(True)).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(r2, text="Collapse all", command=lambda: self.bulk_expand(False)).pack(side=tk.RIGHT, padx=2)
 
         # Ряд 3: Поле основного запроса Elastic
         r3 = ttk.Frame(top, padding=(0, 5, 0, 0)); r3.pack(side=tk.TOP, fill=tk.X)
@@ -72,18 +72,21 @@ class ElasticLogViewerUltra:
         self.f_var = tk.StringVar(value=self.conf.get('offline_filter', ''))
         self.f_var.trace_add("write", lambda *a: self.render_logs())
         self.f_ent = ttk.Entry(bot, textvariable=self.f_var); self.f_ent.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        self.info_lbl = ttk.Label(bot, text="[Ctrl+S] Search | [Ctrl+F] Filter | Space Highlight | C-Space Clear hl", foreground="gray")
+        # self.info_lbl = ttk.Label(bot, text="[Ctrl+S] Search | [Ctrl+F] Filter | Space Highlight | C-Space Clear hl", foreground="gray")
+        self.info_lbl = ttk.Label(bot, text="[Ctrl+S] Search | [Ctrl+F] Filter | [F5/Ctrl+R] Refresh", foreground="gray")
         self.info_lbl.pack(side=tk.RIGHT, padx=10)
         ttk.Label(bot, textvariable=self.status_var, foreground="blue", font=("TkDefaultFont", 9, "bold")).pack(side=tk.RIGHT, padx=5)
 
         # --- Привязка горячих клавиш ---
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.update_ui_font(); self.check_queue()
         self.txt.bind("<Button-1>", self.on_text_click)
         self.txt.bind("<space>", self.add_highlighter)
         self.txt.bind("<Control-space>", self.clear_highlighters)
-        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.bind("<Control-f>", lambda e: self.f_ent.focus_set())
         self.root.bind("<Control-s>", lambda e: [self.q_ent.focus_set(), "break"])
+        self.root.bind("<Control-r>", lambda e: self.start_fetch())
+        self.root.bind("<F5>", lambda e: self.start_fetch())
 
         mods = ["Control", "Command"]
         for cls in ("Entry", "TEntry", "Text"):
