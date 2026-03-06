@@ -44,7 +44,7 @@ class ElasticLogViewerUltra:
         self.t_to = ttk.Entry(r2, width=12); self.t_to.insert(0, self.conf.get('t_to', 'now'))
         self.t_to.pack(side=tk.LEFT, padx=2)
         
-        for label, val in [("5m", "now-5m"), ("15m", "now-15m"), ("15m", "now-30m"), ("1h", "now-1h"), ("3h", "now-3h"), ("12h", "now-12h"), ("24h", "now-24h")]:
+        for label, val in [("5m", "now-5m"), ("15m", "now-15m"), ("30m", "now-30m"), ("1h", "now-1h"), ("3h", "now-3h"), ("12h", "now-12h"), ("24h", "now-24h")]:
             ttk.Button(r2, text=label, width=4, command=lambda v=val: self._set_time(v)).pack(side=tk.LEFT, padx=1)
 
         ttk.Button(r2, text="EXPAND ALL", command=lambda: self.bulk_expand(True)).pack(side=tk.RIGHT, padx=2)
