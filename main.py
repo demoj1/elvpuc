@@ -1,6 +1,106 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, font as tkfont
-import requests, json, threading, queue, os, random, hashlib
+import requests, json, threading, queue, os, random, hashlib, colorsys
+from datetime import datetime, timezone
+
+class ElasticHeatmap:
+    def __init__(self, parent, data=None, height=30, font_size=12):
+        self.parent = parent
+        self.data = data or []
+        self.max_count = 1
+        self.font_size = font_size
+
+        # Создаем холст внутри переданного родителя
+        self.canvas = tk.Canvas(parent, height=height, bg="#fdfdfd", highlightthickness=0)
+        self.canvas.pack(fill="x", padx=0, pady=0)
+
+        # Элементы тултипа (создаем один раз)
+        self.tip_bg = self.canvas.create_rectangle(0, 0, 0, 0, fill="#333333", state="hidden")
+        self.tip_text = self.canvas.create_text(0, 0, text="", fill="white", anchor="nw", state="hidden", font=("Consolas", self.font_size))
+
+        # Биндинги
+        self.canvas.bind("<Configure>", lambda e: self.render())
+        self.canvas.bind("<Motion>", self._update_tooltip)
+        self.canvas.bind("<Leave>", self._hide_tooltip)
+
+        if self.data:
+            self.update_data(self.data)
+
+    def _utc_to_local(self, utc_str):
+        try:
+            utc_dt = datetime.fromisoformat(utc_str.replace('Z', '+00:00'))
+            local_dt = utc_dt.astimezone()
+            return local_dt.strftime('%H:%M:%S')
+        except Exception:
+            return utc_str
+
+    def update_font_size(self, new_size):
+        fname = "Iosevka" if "Iosevka" in tkfont.families() else "Monospace"
+        self.font_size = new_size
+        new_font = (fname, self.font_size, "normal")
+        self.canvas.itemconfig(self.tip_text, font=new_font)
+
+    def update_data(self, new_data):
+        """Метод для внешнего обновления данных"""
+        self.data = new_data
+        self.max_count = max([b.get('doc_count', 0) for b in self.data]) if self.data else 1
+        if self.max_count == 0: self.max_count = 1
+        self.render()
+
+    def _get_color(self, count):
+        if count == 0: return "#ffffff" # Почти черный для пустоты
+
+        ratio = count / self.max_count
+        # Сдвигаем Hue: 0.7 (фиолетовый/синий) -> 0.15 (желтый)
+        hue = 0.7 * (1 - ratio * 0.8)
+        # Увеличиваем яркость (Value) для эффекта свечения
+        value = 0.3 + (0.7 * ratio)
+
+        rgb = colorsys.hsv_to_rgb(hue, 0.9, value)
+        return '#%02x%02x%02x' % tuple(int(c * 255) for c in rgb)
+
+    def render(self):
+        self.canvas.delete("bar")
+        if not self.data: return
+
+        w = self.canvas.winfo_width()
+        h = self.canvas.winfo_height()
+        self.step = w / len(self.data)
+
+        for i, item in enumerate(self.data):
+            color = self._get_color(item.get('doc_count', 0))
+            self.canvas.create_rectangle(
+                i * self.step, 0, (i + 1) * self.step, h,
+                fill=color, outline=color, width=1, tags="bar"
+            )
+
+        # Поднимаем тултип в топ стека отрисовки
+        self.canvas.tag_raise(self.tip_bg)
+        self.canvas.tag_raise(self.tip_text)
+
+    def _update_tooltip(self, event):
+        if not self.data or not hasattr(self, 'step'): return
+        idx = int(event.x / self.step)
+        if 0 <= idx < len(self.data):
+            item = self.data[idx]
+            local_time = self._utc_to_local(item.get('key_as_string', ''))
+            msg = f" {local_time} | Logs: {item['doc_count']} "
+
+            self.canvas.itemconfig(self.tip_text, text=msg, state="normal")
+            x1, y1, x2, y2 = self.canvas.bbox(self.tip_text)
+            tw, th = x2 - x1, y2 - y1
+
+            fixed_y = (self.canvas.winfo_height() - th) // 2
+            tx = event.x + 20 if event.x + 20 + tw < self.canvas.winfo_width() else event.x - 20 - tw
+            self.canvas.coords(self.tip_text, tx, fixed_y)
+            self.canvas.coords(self.tip_bg, tx-4, fixed_y-2, tx+tw+4, fixed_y+th+2)
+            self.canvas.itemconfig(self.tip_bg, state="normal")
+        else:
+            self._hide_tooltip()
+
+    def _hide_tooltip(self, event=None):
+        self.canvas.itemconfig(self.tip_bg, state="hidden")
+        self.canvas.itemconfig(self.tip_text, state="hidden")
 
 class ElasticLogViewerUltra:
     def __init__(self, root):
@@ -10,7 +110,10 @@ class ElasticLogViewerUltra:
         self.root.geometry("1450x900")
 
         self.config_file = os.path.expanduser("~/.config/elk_config")
-        self.all_logs, self.data_queue, self.is_loading = [], queue.Queue(), False
+        self.all_logs = []
+        self.data_queue = queue.Queue()
+        self.is_loading = False
+        self.hist_agg = []
         self.log_font_size, self.ui_font_size = tk.IntVar(), tk.IntVar()
         self.status_var = tk.StringVar(value="Ready")
         self.highlighters = {}
@@ -68,6 +171,10 @@ class ElasticLogViewerUltra:
         ttk.Button(r2, text="Expand all", command=lambda: self.bulk_expand(True)).pack(side=tk.RIGHT, padx=2)
         ttk.Button(r2, text="Collapse all", command=lambda: self.bulk_expand(False)).pack(side=tk.RIGHT, padx=2)
 
+        # --- UI SETUP: HeatMap ---
+
+        self.heat_canvas = ElasticHeatmap(root, height=35)
+
         # Ряд 3: Поле основного запроса Elastic
         r3 = ttk.Frame(top, padding=(0, 5, 0, 0)); r3.pack(side=tk.TOP, fill=tk.X)
         ttk.Label(r3, text="Query:").pack(side=tk.LEFT)
@@ -85,7 +192,7 @@ class ElasticLogViewerUltra:
         # --- UI SETUP: Текстовая область с логами ---
         self.txt_f = ttk.Frame(root); self.txt_f.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         v_sc = ttk.Scrollbar(self.txt_f); v_sc.pack(side=tk.RIGHT, fill=tk.Y)
-        self.txt = tk.Text(self.txt_f, bg="white", fg="black", padx=0, pady=0, wrap=tk.CHAR, borderwidth=0, undo=False, yscrollcommand=v_sc.set)
+        self.txt = tk.Text(self.txt_f, bg="white", fg="black", width=1, height=1, padx=0, pady=0, wrap=tk.CHAR, borderwidth=0, undo=False, yscrollcommand=v_sc.set)
         self.txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 0));
         v_sc.config(command=self.txt.yview)
 
@@ -167,6 +274,7 @@ class ElasticLogViewerUltra:
         fname = "Iosevka" if "Iosevka" in tkfont.families() else "Monospace"
         ui_f = tkfont.Font(family="TkDefaultFont", size=u_sz)
         self.txt.config(font=(fname, sz))
+        self.heat_canvas.update_font_size(u_sz)
         self.txt.tag_configure("header", background="#f2f2f2", font=(fname, sz, "bold"), spacing1=10, spacing3=5)
         self.txt.tag_configure("msg", font=(fname, sz), lmargin1=20, lmargin2=20)
         ttk.Style().configure(".", font=ui_f)
@@ -203,7 +311,7 @@ class ElasticLogViewerUltra:
         # Очистка всех тегов перед удалением контента
         for tag in list(self.txt.tag_names()):
             if tag.startswith("hi_") or tag.startswith("h_"): self.txt.tag_delete(tag)
-        self.txt.delete("1.0", tk.END)
+            self.txt.delete("1.0", tk.END)
 
         q = self.f_var.get().lower().split(); count = 0
         for i, log in enumerate(self.all_logs):
@@ -212,11 +320,12 @@ class ElasticLogViewerUltra:
             if not all((p[1:] in full if p.startswith('+') else p[1:] not in full if p.startswith('-') else p in full) for p in q): continue
             count += 1
             # Вставка заголовка с уникальным тегом h_{i}
-            self.txt.insert(tk.END, f" {'[-] ' if log['expanded'] else '[+] '} {log['time']} \n", ("header", f"h_{i}"))
+            self.txt.insert(tk.END, f" {'⮿' if log['expanded'] else '⎊'} {log['time']} \n", ("header", f"h_{i}"))
             disp = log['msg'] if log['expanded'] else "\n".join(log['msg'].splitlines()[:3]) + "\n... [COLLAPSED] ...\n"
             self.txt.insert(tk.END, "\n" + disp + "\n\n", "msg")
 
         self.apply_highlighters()
+        self.heat_canvas.update_data(self.hist_agg)
         self.txt.config(state='disabled'); self.status_var.set(f"Showing: {count}/{len(self.all_logs)}")
         self.txt.yview_moveto(pos)
 
@@ -248,13 +357,38 @@ class ElasticLogViewerUltra:
 
     def worker(self, p):
         try:
-            body = {"size": int(p["lim"]), "sort": [{"@timestamp": "desc"}],
-                    "query": {"bool": {"must": [{"query_string": {"query": p["q"]}}],
-                    "filter": [{"range": {"@timestamp": {"gte": p["f"], "lte": p["t"]}}}]}}}
-            r = requests.post(p["url"], json=body, timeout=10).json()
-            hits = [{"t": h['_source'].get('@timestamp', '---'), "m": h['_source'].get('message', json.dumps(h['_source'], indent=2))} for h in r.get('hits', {}).get('hits', [])]
+            r = requests.post(
+                p["url"],
+                json={
+                  "size": int(p["lim"]),
+                  "sort": [{"@timestamp": "desc"}],
+                  "query": {
+                    "bool": {
+                      "must": [{"query_string": {"query": p["q"]}}],
+                      "filter": [{"range": {"@timestamp": {"gte": p["f"], "lte": p["t"]}}}]
+                    }
+                  },
+                  "aggs": {
+                    "agg": {
+                      "auto_date_histogram": {
+                        "field": "@timestamp",
+                        "buckets": "150",
+                      }
+                    }
+                  }
+                },
+                timeout=15
+            ).json()
+
+            hits = [{
+                "t": h['_source'].get('@timestamp', '---'),
+                "m": h['_source'].get('message', json.dumps(h['_source'], indent=2))
+            } for h in r.get('hits', {}).get('hits', [])]
+
             self.data_queue.put(("OK", hits))
-        except Exception as e: self.data_queue.put(("ERR", str(e)))
+            self.hist_agg = r.get('aggregations', {}).get('agg', {}).get('buckets', [])
+        except Exception as e:
+            self.data_queue.put(("ERR", str(e)))
 
     def check_queue(self):
         try:
@@ -264,7 +398,9 @@ class ElasticLogViewerUltra:
                 if s == "OK":
                     self.all_logs = [{"time": x['t'], "msg": x['m'], "expanded": True} for x in p]
                     self.render_logs()
-                else: messagebox.showerror("Error", p)
+                else:
+                    messagebox.showerror("Error", p)
+                    self.status_var.set("Error")
         except queue.Empty: pass
         self.root.after(100, self.check_queue)
 
