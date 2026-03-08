@@ -65,14 +65,17 @@ class ElasticHeatmap:
         self.render()
 
     def _on_canvas_click(self, event):
-        if not self.data or not self.text_widget:
-            return
+        if not self.text_widget or not self.data: return
 
         w = self.canvas.winfo_width()
         fraction = event.x / w
-        target_pos = (1.0 - fraction)
+        target = 1.0 - fraction
 
-        self.text_widget.yview_moveto(target_pos)
+        f, l = self.text_widget.yview()
+        window_size = l - f
+        adjusted_target = target * (1.0 - window_size)
+
+        self.text_widget.yview_moveto(adjusted_target)
 
     def _get_color(self, count):
         if count == 0: return "#ffffff" # Почти черный для пустоты
@@ -269,10 +272,19 @@ class ElasticLogViewerUltra:
                 for key in ("x", "X"):
                     root.bind_class(cls, f"<{m}-{key}>", lambda e: e.widget.event_generate("<<Cut>>"))
 
-    def sync_scroll(self, *args):
-        self.v_sc.set(*args)
+    def sync_scroll(self, first, last):
+        self.v_sc.set(first, last)
 
-        pos = float(args[0])
+        f = float(first)
+        l = float(last)
+
+        window_size = l - f
+        if window_size < 1.0:
+            pos = f / (1.0 - window_size)
+        else:
+            pos = 0
+
+        pos = max(0.0, min(1.0, pos))
 
         self.heat_canvas.set_scroll_pos(pos)
 
@@ -342,6 +354,13 @@ class ElasticLogViewerUltra:
 
     # --- Отрисовка логов (Render Engine) ---
     def render_logs(self):
+        def _to_local(utc_str):
+            try:
+                dt_utc = datetime.fromisoformat(utc_str.replace('Z', '+00:00'))
+                return dt_utc.astimezone().strftime('%H:%M:%S.%f')[:-3]
+            except Exception:
+                return utc_str
+
         try: pos = self.txt.yview()[0]
         except: pos = 0.0
         self.txt.config(state='normal')
@@ -352,12 +371,13 @@ class ElasticLogViewerUltra:
 
         q = self.f_var.get().lower().split(); count = 0
         for i, log in enumerate(self.all_logs):
+            local_time = _to_local(log['time'])
             full = (log['time'] + " " + log['msg']).lower()
             # Логика офлайн фильтра (+ и -)
             if not all((p[1:] in full if p.startswith('+') else p[1:] not in full if p.startswith('-') else p in full) for p in q): continue
             count += 1
             # Вставка заголовка с уникальным тегом h_{i}
-            self.txt.insert(tk.END, f" {'⮿' if log['expanded'] else '⎊'} {log['time']} \n", ("header", f"h_{i}"))
+            self.txt.insert(tk.END, f" {'⮿' if log['expanded'] else '⎊'} {local_time} | {log['time']} \n", ("header", f"h_{i}"))
             disp = log['msg'] if log['expanded'] else "\n".join(log['msg'].splitlines()[:3]) + "\n... [COLLAPSED] ...\n"
             self.txt.insert(tk.END, "\n" + disp + "\n\n", "msg")
 
