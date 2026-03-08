@@ -9,6 +9,7 @@ class ElasticHeatmap:
         self.data = data or []
         self.max_count = 1
         self.font_size = font_size
+        self.text_widget = None
 
         # Создаем холст внутри переданного родителя
         self.canvas = tk.Canvas(parent, height=height, bg="#fdfdfd", highlightthickness=0)
@@ -17,14 +18,30 @@ class ElasticHeatmap:
         # Элементы тултипа (создаем один раз)
         self.tip_bg = self.canvas.create_rectangle(0, 0, 0, 0, fill="#333333", state="hidden")
         self.tip_text = self.canvas.create_text(0, 0, text="", fill="white", anchor="nw", state="hidden", font=("Consolas", self.font_size))
+        self.scroll_marker = self.canvas.create_line(0, 0, 0, height, fill="#FF0000", width=3, state="hidden")
 
         # Биндинги
         self.canvas.bind("<Configure>", lambda e: self.render())
         self.canvas.bind("<Motion>", self._update_tooltip)
         self.canvas.bind("<Leave>", self._hide_tooltip)
+        self.canvas.bind("<Button-1>", self._on_canvas_click)
 
         if self.data:
             self.update_data(self.data)
+
+    def set_text_widget(self, widget):
+        self.text_widget = widget
+
+    def set_scroll_pos(self, fraction):
+        """Метод для перемещения маркера. fraction — число от 0.0 до 1.0"""
+        if not self.data: return
+
+        w = self.canvas.winfo_width()
+        x = w * (1.0-fraction)
+
+        self.canvas.coords(self.scroll_marker, x, 0, x, self.canvas.winfo_height())
+        self.canvas.itemconfig(self.scroll_marker, state="normal")
+        self.canvas.tag_raise(self.scroll_marker)
 
     def _utc_to_local(self, utc_str):
         try:
@@ -46,6 +63,16 @@ class ElasticHeatmap:
         self.max_count = max([b.get('doc_count', 0) for b in self.data]) if self.data else 1
         if self.max_count == 0: self.max_count = 1
         self.render()
+
+    def _on_canvas_click(self, event):
+        if not self.data or not self.text_widget:
+            return
+
+        w = self.canvas.winfo_width()
+        fraction = event.x / w
+        target_pos = (1.0 - fraction)
+
+        self.text_widget.yview_moveto(target_pos)
 
     def _get_color(self, count):
         if count == 0: return "#ffffff" # Почти черный для пустоты
@@ -191,10 +218,13 @@ class ElasticLogViewerUltra:
 
         # --- UI SETUP: Текстовая область с логами ---
         self.txt_f = ttk.Frame(root); self.txt_f.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-        v_sc = ttk.Scrollbar(self.txt_f); v_sc.pack(side=tk.RIGHT, fill=tk.Y)
-        self.txt = tk.Text(self.txt_f, bg="white", fg="black", width=1, height=1, padx=0, pady=0, wrap=tk.CHAR, borderwidth=0, undo=False, yscrollcommand=v_sc.set)
+        self.v_sc = ttk.Scrollbar(self.txt_f);
+        self.v_sc.pack(side=tk.RIGHT, fill=tk.Y)
+        self.txt = tk.Text(self.txt_f, bg="white", fg="black", width=1, height=1, padx=0, pady=0, wrap=tk.CHAR, borderwidth=0, undo=False, yscrollcommand=self.sync_scroll)
         self.txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 0));
-        v_sc.config(command=self.txt.yview)
+        self.v_sc.config(command=self.txt.yview)
+
+        self.heat_canvas.set_text_widget(self.txt)
 
         # --- UI SETUP: Нижняя панель (Фильтр и Статус) ---
         bot = ttk.Frame(root, padding=5); bot.pack(side=tk.BOTTOM, fill=tk.X)
@@ -238,6 +268,13 @@ class ElasticLogViewerUltra:
 
                 for key in ("x", "X"):
                     root.bind_class(cls, f"<{m}-{key}>", lambda e: e.widget.event_generate("<<Cut>>"))
+
+    def sync_scroll(self, *args):
+        self.v_sc.set(*args)
+
+        pos = float(args[0])
+
+        self.heat_canvas.set_scroll_pos(pos)
 
     # --- Вспомогательные методы построения интерфейса ---
     def _add_f(self, p, t, d, w, c):
