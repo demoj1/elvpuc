@@ -2,46 +2,93 @@ import tkinter as tk
 from tkinter import ttk, messagebox, font as tkfont
 import requests, json, threading, queue, os, random, hashlib, colorsys
 from datetime import datetime, timezone
+import tkinter as tk
+import colorsys
+from datetime import datetime
 
 class ElasticHeatmap:
-    def __init__(self, parent, data=None, height=30, font_size=12):
+    def __init__(self, parent, data=None, height=35, on_zoom_callback=None):
         self.parent = parent
         self.data = data or []
+        self.on_zoom = on_zoom_callback  # Функция, которая вызовется при клике
         self.max_count = 1
-        self.font_size = font_size
-        self.text_widget = None
+        self.selection_indices = [0, 0]  # [start, end]
+        self.step = 1
+        self.zoom_range = 1  # Радиус захвата: 1 означает (idx-1, idx, idx+1) = 3 бакета
+        self.current_idx = 0
 
-        # Создаем холст внутри переданного родителя
-        self.canvas = tk.Canvas(parent, height=height, bg="#fdfdfd", highlightthickness=0)
+        self.canvas = tk.Canvas(parent, height=height, bg="#050505", highlightthickness=0)
         self.canvas.pack(fill="x", padx=0, pady=0)
 
-        # Элементы тултипа (создаем один раз)
-        self.tip_bg = self.canvas.create_rectangle(0, 0, 0, 0, fill="#333333", state="hidden")
-        self.tip_text = self.canvas.create_text(0, 0, text="", fill="white", anchor="nw", state="hidden", font=("Consolas", self.font_size))
-        self.scroll_marker = self.canvas.create_line(0, 0, 0, height, fill="#FF0000", width=3, state="hidden")
+        # Рамка выделения (красный контур)
+        self.selector_rect = self.canvas.create_rectangle(0, 0, 0, 0, outline="#ff0000", width=2, state="hidden")
 
-        # Биндинги
+        # Тултип
+        self.tip_bg = self.canvas.create_rectangle(0, 0, 0, 0, fill="#ffffff", state="hidden")
+        self.tip_text = self.canvas.create_text(0, 0, text="", fill="#000000", anchor="nw", state="hidden", font=("Consolas", 9, "bold"))
+
         self.canvas.bind("<Configure>", lambda e: self.render())
         self.canvas.bind("<Motion>", self._update_tooltip)
         self.canvas.bind("<Leave>", self._hide_tooltip)
+        self.canvas.bind("<MouseWheel>", self._on_mouse_wheel)
+        self.canvas.bind("<Button-4>", self._on_mouse_wheel) # Linux Up
+        self.canvas.bind("<Button-5>", self._on_mouse_wheel) # Linux Down
         self.canvas.bind("<Button-1>", self._on_canvas_click)
 
-        if self.data:
-            self.update_data(self.data)
+    def update_data(self, new_data):
+        self.data = new_data
+        counts = [b.get('doc_count', 0) for b in self.data]
+        self.max_count = max(counts) if counts and max(counts) > 0 else 1
+        # Сбрасываем выделение при новых данных
+        self.selection_indices = [0, len(self.data) - 1] if self.data else [0, 0]
+        self.canvas.itemconfig(self.selector_rect, state="hidden")
+        self.render()
 
-    def set_text_widget(self, widget):
-        self.text_widget = widget
+    def update_font_size(self, new_size):
+        fname = "Iosevka" if "Iosevka" in tkfont.families() else "Monospace"
+        self.font_size = new_size
+        new_font = (fname, self.font_size, "normal")
+        self.canvas.itemconfig(self.tip_text, font=new_font)
 
-    def set_scroll_pos(self, fraction):
-        """Метод для перемещения маркера. fraction — число от 0.0 до 1.0"""
+    def _get_spectrum_color(self, count):
+        if count == 0: return "#0a0a0a"
+        ratio = count / self.max_count
+        hue = 0.7 * (1 - ratio * 0.8)
+        value = 0.3 + (0.7 * ratio)
+        rgb = colorsys.hsv_to_rgb(hue, 0.9, value)
+        return '#%02x%02x%02x' % tuple(int(c * 255) for c in rgb)
+
+    def render(self):
+        self.canvas.delete("bar")
+        if not self.data: return
+        w, h = self.canvas.winfo_width(), self.canvas.winfo_height()
+        self.step = w / len(self.data)
+        for i, item in enumerate(self.data):
+            color = self._get_spectrum_color(item.get('doc_count', 0))
+            self.canvas.create_rectangle(i * self.step, 0, (i + 1) * self.step + 1, h, fill=color, outline="", tags="bar")
+        self.canvas.tag_raise(self.selector_rect)
+        self.canvas.tag_raise(self.tip_bg)
+        self.canvas.tag_raise(self.tip_text)
+
+
+    def _on_mouse_wheel(self, event):
         if not self.data: return
 
-        w = self.canvas.winfo_width()
-        x = w * (1.0-fraction)
+        delta = 1 if (event.delta > 0 or event.num == 4) else -1
 
-        self.canvas.coords(self.scroll_marker, x, 0, x, self.canvas.winfo_height())
-        self.canvas.itemconfig(self.scroll_marker, state="normal")
-        self.canvas.tag_raise(self.scroll_marker)
+        self.zoom_range += delta
+        if self.zoom_range < 1: self.zoom_range = 1
+
+        self._update_tooltip(event)
+
+    def _on_canvas_click(self, event):
+        if not self.data or not self.on_zoom or not self.selection_indices: return
+
+        s, e = self.selection_indices
+        t_from = self.data[s]['key_as_string']
+        t_to = self.data[e]['key_as_string']
+
+        self.on_zoom(t_from, t_to)
 
     def _utc_to_local(self, utc_str):
         try:
@@ -51,86 +98,41 @@ class ElasticHeatmap:
         except Exception:
             return utc_str
 
-    def update_font_size(self, new_size):
-        fname = "Iosevka" if "Iosevka" in tkfont.families() else "Monospace"
-        self.font_size = new_size
-        new_font = (fname, self.font_size, "normal")
-        self.canvas.itemconfig(self.tip_text, font=new_font)
-
-    def update_data(self, new_data):
-        """Метод для внешнего обновления данных"""
-        self.data = new_data
-        self.max_count = max([b.get('doc_count', 0) for b in self.data]) if self.data else 1
-        if self.max_count == 0: self.max_count = 1
-        self.render()
-
-    def _on_canvas_click(self, event):
-        if not self.text_widget or not self.data: return
-
-        w = self.canvas.winfo_width()
-        fraction = event.x / w
-        target = 1.0 - fraction
-
-        f, l = self.text_widget.yview()
-        window_size = l - f
-        adjusted_target = target * (1.0 - window_size)
-
-        self.text_widget.yview_moveto(adjusted_target)
-
-    def _get_color(self, count):
-        if count == 0: return "#ffffff" # Почти черный для пустоты
-
-        ratio = count / self.max_count
-        # Сдвигаем Hue: 0.7 (фиолетовый/синий) -> 0.15 (желтый)
-        hue = 0.7 * (1 - ratio * 0.8)
-        # Увеличиваем яркость (Value) для эффекта свечения
-        value = 0.3 + (0.7 * ratio)
-
-        rgb = colorsys.hsv_to_rgb(hue, 0.9, value)
-        return '#%02x%02x%02x' % tuple(int(c * 255) for c in rgb)
-
-    def render(self):
-        self.canvas.delete("bar")
-        if not self.data: return
-
-        w = self.canvas.winfo_width()
-        h = self.canvas.winfo_height()
-        self.step = w / len(self.data)
-
-        for i, item in enumerate(self.data):
-            color = self._get_color(item.get('doc_count', 0))
-            self.canvas.create_rectangle(
-                i * self.step, 0, (i + 1) * self.step, h,
-                fill=color, outline=color, width=1, tags="bar"
-            )
-
-        # Поднимаем тултип в топ стека отрисовки
-        self.canvas.tag_raise(self.tip_bg)
-        self.canvas.tag_raise(self.tip_text)
-
     def _update_tooltip(self, event):
-        if not self.data or not hasattr(self, 'step'): return
-        idx = int(event.x / self.step)
-        if 0 <= idx < len(self.data):
-            item = self.data[idx]
-            local_time = self._utc_to_local(item.get('key_as_string', ''))
-            msg = f" {local_time} | Logs: {item['doc_count']} "
+        if not self.data or self.step <= 0: return
 
-            self.canvas.itemconfig(self.tip_text, text=msg, state="normal")
-            x1, y1, x2, y2 = self.canvas.bbox(self.tip_text)
-            tw, th = x2 - x1, y2 - y1
+        # Определяем индекс под мышкой
+        self.current_idx = int(event.x / self.step)
+        self.current_idx = max(0, min(len(self.data) - 1, self.current_idx))
 
-            fixed_y = (self.canvas.winfo_height() - th) // 2
-            tx = event.x + 20 if event.x + 20 + tw < self.canvas.winfo_width() else event.x - 20 - tw
-            self.canvas.coords(self.tip_text, tx, fixed_y)
-            self.canvas.coords(self.tip_bg, tx-4, fixed_y-2, tx+tw+4, fixed_y+th+2)
-            self.canvas.itemconfig(self.tip_bg, state="normal")
-        else:
-            self._hide_tooltip()
+        # Рассчитываем границы рамки вокруг курсора
+        s = max(0, self.current_idx - self.zoom_range)
+        e = min(len(self.data) - 1, self.current_idx + self.zoom_range)
+        self.selection_indices = [s, e]
+
+        # Отрисовка рамки "прицела"
+        h = self.canvas.winfo_height()
+        self.canvas.coords(self.selector_rect, s * self.step, 2, (e + 1) * self.step, h - 2)
+        self.canvas.itemconfig(self.selector_rect, state="normal")
+
+        # Обновление текста тултипа
+        item = self.data[self.current_idx]
+        local_time = self._utc_to_local(item.get('key_as_string', ''))
+        msg = f" {local_time} | Logs: {item['doc_count']} "
+        self.canvas.itemconfig(self.tip_text, text=msg, state="normal")
+
+        # Позиционирование текста (как у тебя было)
+        bbox = self.canvas.bbox(self.tip_text)
+        tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
+        tx = event.x + 15 if event.x + 15 + tw < self.canvas.winfo_width() else event.x - 15 - tw
+        self.canvas.coords(self.tip_text, tx, 5)
+        self.canvas.coords(self.tip_bg, tx-2, 3, tx+tw+2, 3+th+2)
+        self.canvas.itemconfig(self.tip_bg, state="normal")
 
     def _hide_tooltip(self, event=None):
         self.canvas.itemconfig(self.tip_bg, state="hidden")
         self.canvas.itemconfig(self.tip_text, state="hidden")
+        self.canvas.itemconfig(self.selector_rect, state="hidden")
 
 class ElasticLogViewerUltra:
     def __init__(self, root):
@@ -187,10 +189,10 @@ class ElasticLogViewerUltra:
         ttk.Label(r2, text="Limit:").pack(side=tk.LEFT); self.lim_ent.pack(side=tk.LEFT, padx=2)
 
         ttk.Label(r2, text="Range:").pack(side=tk.LEFT, padx=(15, 2))
-        self.t_from = ttk.Entry(r2, width=12); self.t_from.insert(0, self.conf.get('t_from', 'now-15m'))
+        self.t_from = ttk.Entry(r2, width=22); self.t_from.insert(0, self.conf.get('t_from', 'now-15m'))
         self.t_from.pack(side=tk.LEFT, padx=2)
         ttk.Label(r2, text="to").pack(side=tk.LEFT)
-        self.t_to = ttk.Entry(r2, width=12); self.t_to.insert(0, self.conf.get('t_to', 'now'))
+        self.t_to = ttk.Entry(r2, width=22); self.t_to.insert(0, self.conf.get('t_to', 'now'))
         self.t_to.pack(side=tk.LEFT, padx=2)
 
         # Кнопки пресетов времени
@@ -203,7 +205,7 @@ class ElasticLogViewerUltra:
 
         # --- UI SETUP: HeatMap ---
 
-        self.heat_canvas = ElasticHeatmap(root, height=35)
+        self.heat_canvas = ElasticHeatmap(root, height=35, on_zoom_callback=self.handle_zoom)
 
         # Ряд 3: Поле основного запроса Elastic
         r3 = ttk.Frame(top, padding=(0, 5, 0, 0)); r3.pack(side=tk.TOP, fill=tk.X)
@@ -223,11 +225,9 @@ class ElasticLogViewerUltra:
         self.txt_f = ttk.Frame(root); self.txt_f.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         self.v_sc = ttk.Scrollbar(self.txt_f);
         self.v_sc.pack(side=tk.RIGHT, fill=tk.Y)
-        self.txt = tk.Text(self.txt_f, bg="white", fg="black", width=1, height=1, padx=0, pady=0, wrap=tk.CHAR, borderwidth=0, undo=False, yscrollcommand=self.sync_scroll)
+        self.txt = tk.Text(self.txt_f, bg="white", fg="black", width=1, height=1, padx=0, pady=0, wrap=tk.CHAR, borderwidth=0, undo=False, yscrollcommand=self.v_sc.set)
         self.txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 0));
         self.v_sc.config(command=self.txt.yview)
-
-        self.heat_canvas.set_text_widget(self.txt)
 
         # --- UI SETUP: Нижняя панель (Фильтр и Статус) ---
         bot = ttk.Frame(root, padding=5); bot.pack(side=tk.BOTTOM, fill=tk.X)
@@ -271,22 +271,6 @@ class ElasticLogViewerUltra:
 
                 for key in ("x", "X"):
                     root.bind_class(cls, f"<{m}-{key}>", lambda e: e.widget.event_generate("<<Cut>>"))
-
-    def sync_scroll(self, first, last):
-        self.v_sc.set(first, last)
-
-        f = float(first)
-        l = float(last)
-
-        window_size = l - f
-        if window_size < 1.0:
-            pos = f / (1.0 - window_size)
-        else:
-            pos = 0
-
-        pos = max(0.0, min(1.0, pos))
-
-        self.heat_canvas.set_scroll_pos(pos)
 
     # --- Вспомогательные методы построения интерфейса ---
     def _add_f(self, p, t, d, w, c):
@@ -337,20 +321,26 @@ class ElasticLogViewerUltra:
 
     # --- Атомарная подсветка (Highlighters) ---
     def apply_highlighters(self):
-        # Удаляем только hi_ теги перед перекраской
         for tag in list(self.txt.tag_names()):
             if tag.startswith("hi_"): self.txt.tag_delete(tag)
         for text, color in self.highlighters.items():
             if not text: continue
-            # Хеширование имени тега для стабильности (emoji/спецсимволы)
             t_name = f"hi_{hashlib.md5(text.encode('utf-8')).hexdigest()[:10]}"
             self.txt.tag_configure(t_name, background=color)
             start = "1.0"
             while True:
-                # regexp=False — защита от SegFault на символах типа []()
                 start = self.txt.search(text, start, tk.END, nocase=True, regexp=False)
                 if not start: break
                 end = f"{start}+{len(text)}c"; self.txt.tag_add(t_name, start, end); start = end
+
+    def handle_zoom(self, t_from, t_to):
+        self.t_from.delete(0, tk.END)
+        self.t_from.insert(0, t_from)
+
+        self.t_to.delete(0, tk.END)
+        self.t_to.insert(0, t_to)
+
+        self.start_fetch()
 
     # --- Отрисовка логов (Render Engine) ---
     def render_logs(self):
