@@ -147,6 +147,7 @@ class ElasticLogViewerUltra:
         self.data_queue = queue.Queue()
         self.is_loading = False
         self.hist_agg = []
+        self.hist_agg_sum = 0
         self.log_font_size, self.ui_font_size = tk.IntVar(), tk.IntVar()
         self.status_var = tk.StringVar(value="Ready")
         self.highlighters = {}
@@ -374,7 +375,7 @@ class ElasticLogViewerUltra:
 
         self.apply_highlighters()
         self.heat_canvas.update_data(self.hist_agg)
-        self.txt.config(state='disabled'); self.status_var.set(f"Showing: {count}/{len(self.all_logs)}")
+        self.txt.config(state='disabled'); self.status_var.set(f"Showing: {count}/{self.hist_agg_sum}")
         self.txt.yview_moveto(pos)
 
     # --- Обработчики пользовательских действий ---
@@ -435,6 +436,8 @@ class ElasticLogViewerUltra:
 
             self.data_queue.put(("OK", hits))
             self.hist_agg = r.get('aggregations', {}).get('agg', {}).get('buckets', [])
+            print(self.hist_agg)
+            self.hist_agg_sum = sum([x.get('doc_count', 0) for x in self.hist_agg])
         except Exception as e:
             self.data_queue.put(("ERR", str(e)))
 
