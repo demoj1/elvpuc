@@ -107,7 +107,7 @@ class ElasticHeatmap:
 
         # Рассчитываем границы рамки вокруг курсора
         s = max(0, self.current_idx - self.zoom_range)
-        e = min(len(self.data) - 1, self.current_idx + self.zoom_range + 1)
+        e = min(len(self.data) - 1, self.current_idx + self.zoom_range)
         self.selection_indices = [s, e]
 
         # Отрисовка рамки "прицела"
@@ -117,8 +117,9 @@ class ElasticHeatmap:
 
         # Обновление текста тултипа
         item = self.data[self.current_idx]
+        sum_in_range = sum([self.data[i]['doc_count'] for i in range(s, e+1)])
         local_time = self._utc_to_local(item.get('key_as_string', ''))
-        msg = f" {local_time} | Logs: {item['doc_count']} "
+        msg = f" {local_time} | logs: {item['doc_count']} in range: {sum_in_range}"
         self.canvas.itemconfig(self.tip_text, text=msg, state="normal")
 
         # Позиционирование текста (как у тебя было)
