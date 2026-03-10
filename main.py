@@ -107,7 +107,7 @@ class ElasticHeatmap:
 
         # Рассчитываем границы рамки вокруг курсора
         s = max(0, self.current_idx - self.zoom_range)
-        e = min(len(self.data) - 1, self.current_idx + self.zoom_range)
+        e = min(len(self.data) - 1, self.current_idx + self.zoom_range + 1)
         self.selection_indices = [s, e]
 
         # Отрисовка рамки "прицела"
@@ -419,7 +419,7 @@ class ElasticLogViewerUltra:
                     "agg": {
                       "auto_date_histogram": {
                         "field": "@timestamp",
-                        "buckets": "150",
+                        "buckets": "250",
                       }
                     }
                   }
