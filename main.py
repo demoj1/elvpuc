@@ -151,8 +151,11 @@ class ElasticLogViewerUltra:
         self.log_font_size, self.ui_font_size = tk.IntVar(), tk.IntVar()
         self.status_var = tk.StringVar(value="Ready")
         self.highlighters = {}
+        self.query_history = []
 
         self.load_config()
+        if hasattr(self, 'q_hist'):
+            self.q_hist['values'] = self.query_history
 
         # --- UI SETUP: Верхняя панель управления ---
         top = ttk.Frame(root, padding=(0, 5)); top.pack(side=tk.TOP, fill=tk.X)
@@ -211,13 +214,23 @@ class ElasticLogViewerUltra:
 
         # Ряд 3: Поле основного запроса Elastic
         r3 = ttk.Frame(top, padding=(0, 5, 0, 0)); r3.pack(side=tk.TOP, fill=tk.X)
-        ttk.Label(r3, text="Query:").pack(side=tk.LEFT)
 
-        scrollbar = ttk.Scrollbar(r3)
+        q_frame = ttk.Frame(r3); q_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 0))
+
+        self.q_hist = ttk.Combobox(q_frame, values=self.query_history, height=8)
+        self.q_hist.pack(side=tk.TOP, fill=tk.X)
+        self.q_hist.bind("<<ComboboxSelected>>", self._on_history_select)
+        self.q_hist.bind("<Down>", lambda e: self._cycle_history(1) or "break")
+        self.q_hist.bind("<Up>", lambda e: self._cycle_history(-1) or "break")
+        self.q_hist.bind("<MouseWheel>", self._on_hist_wheel)
+        self.q_hist.bind("<Button-4>", self._on_hist_wheel)
+        self.q_hist.bind("<Button-5>", self._on_hist_wheel)
+
+        scrollbar = ttk.Scrollbar(q_frame)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        self.q_ent = tk.Text(r3, height=2, undo=True, maxundo=20, wrap=tk.WORD, yscrollcommand=scrollbar.set)
-        self.q_ent.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 0))
+        self.q_ent = tk.Text(q_frame, height=3, undo=True, maxundo=20, wrap=tk.WORD, yscrollcommand=scrollbar.set)
+        self.q_ent.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         scrollbar.config(command=self.q_ent.yview)
         self.q_ent.insert("1.0", self.conf.get('query', '*'))
         self.q_ent.bind("<Control-Return>", lambda e: self.start_fetch() or "break")
@@ -291,6 +304,7 @@ class ElasticLogViewerUltra:
         except: self.conf = {}
         self.log_font_size.set(self.conf.get('log_sz', 13)); self.ui_font_size.set(self.conf.get('ui_sz', 10))
         self.highlighters = self.conf.get('highlighters', {})
+        self.query_history = self.conf.get('query_history', [])
 
     def on_close(self):
         try:
@@ -299,9 +313,41 @@ class ElasticLogViewerUltra:
                 json.dump({"url": self.url_ent.get(), "index": self.idx_ent.get(), "limit": self.lim_ent.get(),
                            "query": self.q_ent.get("1.0", "end-1c").strip(), "t_from": self.t_from.get(), "t_to": self.t_to.get(),
                            "offline_filter": self.f_var.get(), "log_sz": self.log_font_size.get(),
-                           "ui_sz": self.ui_font_size.get(), "highlighters": self.highlighters}, f, indent=4)
+                           "ui_sz": self.ui_font_size.get(), "highlighters": self.highlighters,
+                           "query_history": self.query_history}, f, indent=4)
         except: pass
         self.root.destroy()
+
+    def _add_to_history(self, query):
+        query = query.strip()
+        if not query: return
+        if query in self.query_history:
+            self.query_history.remove(query)
+        self.query_history.insert(0, query)
+        self.query_history = self.query_history[:50]
+        self.q_hist['values'] = self.query_history
+
+    def _on_history_select(self, event):
+        selected = self.q_hist.get()
+        if selected:
+            self.q_ent.delete("1.0", tk.END)
+            self.q_ent.insert("1.0", selected)
+            self._add_to_history(selected)
+
+    def _cycle_history(self, direction):
+        if not self.query_history: return
+        current = self.q_hist.get()
+        try:
+            idx = self.query_history.index(current)
+            new_idx = (idx + direction) % len(self.query_history)
+        except ValueError:
+            new_idx = 0 if direction == 1 else len(self.query_history) - 1
+        self.q_hist.set(self.query_history[new_idx])
+
+    def _on_hist_wheel(self, event):
+        if not self.query_history: return
+        delta = 1 if (event.delta > 0 or event.num == 4) else -1
+        self._cycle_history(delta)
 
     # --- Управление шрифтами и стилями ---
     def update_ui_font(self):
@@ -401,7 +447,9 @@ class ElasticLogViewerUltra:
         if self.is_loading: return
         self.is_loading, self.btn['state'] = True, 'disabled'; self.status_var.set("Fetching...")
         url = self.url_ent.get().strip().rstrip('/')
-        p = {"url": f"{url}/{self.idx_ent.get()}/_search", "lim": self.lim_ent.get(), "q": self.q_ent.get("1.0", "end-1c").strip(), "f": self.t_from.get(), "t": self.t_to.get()}
+        query = self.q_ent.get("1.0", "end-1c").strip()
+        self._add_to_history(query)
+        p = {"url": f"{url}/{self.idx_ent.get()}/_search", "lim": self.lim_ent.get(), "q": query, "f": self.t_from.get(), "t": self.t_to.get()}
         threading.Thread(target=self.worker, args=(p,), daemon=True).start()
 
     def worker(self, p):
