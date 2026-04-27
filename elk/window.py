@@ -9,10 +9,10 @@ from gi.repository import Gtk, Gdk, GLib
 
 import elk.config  as cfg
 import elk.elastic as elastic
-from elk.styles          import apply_scale, BASE_UI_PT
-from elk.utils           import rand_hl_color, filter_matches
-from elk.widgets.heatmap import HeatmapWidget
-from elk.widgets.log_row import LogRow
+from elk.styles            import apply_scale, BASE_UI_PT
+from elk.utils             import rand_hl_color
+from elk.widgets.heatmap   import HeatmapWidget
+from elk.widgets.log_view  import LogView
 
 # Debounce delay for the offline filter (ms)
 _FILTER_DEBOUNCE_MS = 120
@@ -32,7 +32,6 @@ class ElkWindow(Gtk.ApplicationWindow):
         self._hist_idx:      int            = -1
         self._is_loading:    bool           = False
         self._data_queue:    queue.Queue    = queue.Queue()
-        self._log_rows:      list[LogRow]   = []
         self._filter_timer:  int            = 0   # GLib source id
 
         self._build_ui()
@@ -219,7 +218,7 @@ class ElkWindow(Gtk.ApplicationWindow):
         self._query_view = Gtk.TextView(buffer=self._query_buf)
         self._query_view.set_monospace(True)
         self._query_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
-        self._query_view.set_size_request(-1, 72)
+        self._query_view.set_size_request(-1, 120)
         qk = Gtk.EventControllerKey()
         qk.connect("key-pressed", self._on_query_key)
         self._query_view.add_controller(qk)
@@ -227,7 +226,7 @@ class ElkWindow(Gtk.ApplicationWindow):
         qscroll = Gtk.ScrolledWindow()
         qscroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         qscroll.set_child(self._query_view)
-        qscroll.set_size_request(-1, 72)
+        qscroll.set_size_request(-1, 120)
         box.append(qscroll)
 
         return box
@@ -242,10 +241,10 @@ class ElkWindow(Gtk.ApplicationWindow):
         return bar
 
     def _build_log_area(self) -> Gtk.ScrolledWindow:
-        self._log_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self._log_view = LogView()
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.ALWAYS)
-        scroll.set_child(self._log_box)
+        scroll.set_child(self._log_view)
         scroll.set_vexpand(True)
         return scroll
 
@@ -359,44 +358,38 @@ class ElkWindow(Gtk.ApplicationWindow):
             self._hl_label.set_markup("Highlights: " + "  ".join(parts))
 
     def _try_add_highlight(self) -> bool:
-        focused = self.get_focus()
-        text = self._get_selected_text(focused)
-        if text and text not in self._highlighters:
+        # Try from the log TextView first, then any focused Label
+        text = self._log_view.get_selected_text()
+        if not text:
+            focused = self.get_focus()
+            text = self._get_label_selection(focused)
+        if not text:
+            return False
+        if text in self._highlighters:
+            # Second Space on same word → remove it
+            del self._highlighters[text]
+        else:
             self._highlighters[text] = rand_hl_color()
-            self._refresh_highlights()
-            self._update_hl_label()
-            return True
-        return False
+        self._log_view.refresh_highlights(self._highlighters)
+        self._update_hl_label()
+        return True
 
     @staticmethod
-    def _get_selected_text(widget) -> str | None:
-        """
-        Extract selected text from a Gtk.Label.
-
-        get_selection_bounds() returns (has_selection, start, end) where
-        start and end are BYTE offsets into the UTF-8 Pango layout text.
-        GTK stores end as the index of the LAST selected byte (inclusive),
-        so we need [start_b : end_b + 1] to get the full selection.
-        """
+    def _get_label_selection(widget) -> str | None:
+        """Extract selected text from a Gtk.Label (byte-offset aware)."""
         if not (isinstance(widget, Gtk.Label) and widget.get_selectable()):
             return None
         has_sel, start_b, end_b = widget.get_selection_bounds()
         if not has_sel or start_b == end_b:
             return None
-        # get_layout().get_text() → plain text (markup stripped)
         plain_utf8 = widget.get_layout().get_text().encode("utf-8")
-        text = plain_utf8[start_b + 1 : end_b + 1].decode("utf-8").strip()
+        text = plain_utf8[start_b : end_b + 1].decode("utf-8").strip()
         return text or None
 
     def _clear_highlights(self) -> None:
         self._highlighters.clear()
-        self._refresh_highlights()
+        self._log_view.refresh_highlights(self._highlighters)
         self._update_hl_label()
-
-    def _refresh_highlights(self) -> None:
-        """Re-apply markup to existing LogRow bodies without rebuilding the list."""
-        for row in self._log_rows:
-            row.refresh_highlights(self._highlighters)
 
     # ── Query history ─────────────────────────────────────────────────────────
 
@@ -514,35 +507,13 @@ class ElkWindow(Gtk.ApplicationWindow):
     # ── Render / filter logs ──────────────────────────────────────────────────
 
     def _render_logs(self) -> None:
-        """Full rebuild of log widgets. Called only after a fresh fetch."""
-        # Detach log_box from the scroll to batch DOM changes off-screen
-        scroll = self._log_box.get_parent()
-        scroll.set_child(None)
-
-        while child := self._log_box.get_first_child():
-            self._log_box.remove(child)
-        self._log_rows.clear()
-
-        for i, log in enumerate(self._all_logs):
-            row = LogRow(i, log, self._highlighters)
-            self._log_rows.append(row)
-            self._log_box.append(row)
-
-        scroll.set_child(self._log_box)
-
+        """Full rebuild — called only after a fresh fetch."""
+        self._log_view.set_logs(self._all_logs, self._highlighters)
         self._apply_filter()
         self._heatmap.update_data(self._hist_agg)
         self._update_hl_label()
 
     def _apply_filter(self) -> None:
-        """Show/hide existing rows without rebuilding — O(n) visibility toggle."""
         tokens = self._filter_ent.get_text().lower().split()
-        count  = 0
-
-        for row in self._log_rows:
-            visible = filter_matches(row.log, tokens)
-            row.set_visible(visible)
-            if visible:
-                count += 1
-
+        count  = self._log_view.apply_filter(tokens)
         self._set_status(f"Showing: {count} / {self._hist_agg_sum}")

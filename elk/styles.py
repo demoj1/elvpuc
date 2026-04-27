@@ -96,6 +96,15 @@ label.dim     { color: #777777; }
 label.hl-info { color: #555555; font-style: italic; }
 
 
+/* log TextView */
+textview {
+    background: #ffffff;
+    border: none;
+}
+textview text {
+    background: #ffffff;
+}
+
 .log-header {
     background: #dde8f5;
     color: #1a1a2e;
