@@ -19,4 +19,5 @@ class ElkApp(Gtk.Application):
     def do_activate(self) -> None:
         win = ElkWindow(self)
         win.present()
-        win.push_scale()   # apply saved font sizes immediately
+        win.push_scale()        # apply saved font sizes immediately
+        win._start_fetch()      # auto-search on startup

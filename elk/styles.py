@@ -72,10 +72,10 @@ scale slider {
 }
 
 /* field widths — in px, independent of font size */
-.entry-url   { min-width: 240px; }
+.entry-url   { max-width: 180px; }
 .entry-index { min-width: 140px; }
-.entry-limit { min-width:  44px; max-width:  56px; }
-.entry-time  { min-width: 110px; max-width: 150px; }
+.entry-limit { min-width:  44px; max-width:  50px; }
+.entry-time  { min-width: 190px; max-width: 190px; }
 
 button {
     background: #dde4ee;
@@ -127,6 +127,26 @@ textview text {
     max-height: 24px;
 }
 .status-label { color: #1a6bbf; font-weight: bold; }
+
+/* right-click context menu */
+.ctx-menu {
+    padding: 2px;
+    background: #ffffff;
+}
+.ctx-section {
+    color: #888888;
+    font-size: 0.85em;
+    padding: 6px 8px 2px 8px;
+}
+.ctx-item {
+    padding: 4px 16px;
+    border-radius: 4px;
+    color: #1a1a1a;
+}
+.ctx-item:hover {
+    background: #e8f0fe;
+    color: #1a1a1a;
+}
 
 /* heatmap tooltip popover */
 .heatmap-popover contents {

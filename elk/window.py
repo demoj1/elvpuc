@@ -242,11 +242,58 @@ class ElkWindow(Gtk.ApplicationWindow):
 
     def _build_log_area(self) -> Gtk.ScrolledWindow:
         self._log_view = LogView()
+        self._build_context_menu()
+
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.ALWAYS)
         scroll.set_child(self._log_view)
         scroll.set_vexpand(True)
         return scroll
+
+    def _build_context_menu(self) -> None:
+        """Right-click popover with plain Gtk.Box — no Gio.Menu overhead."""
+        items = [
+            ("Offline filter", None),
+            ("+filter   [A]",        lambda: self._try_add_filter(True)),
+            ("−filter   [D]",        lambda: self._try_add_filter(False)),
+            ("Lucene query", None),
+            ('+query   [Shift+A]',   lambda: self._try_add_query(True)),
+            ('−query   [Shift+D]',   lambda: self._try_add_query(False)),
+            ("Highlight", None),
+            ("Toggle highlight   [Space]", lambda: self._try_add_highlight()),
+        ]
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        box.add_css_class("ctx-menu")
+
+        for label, cb in items:
+            if cb is None:
+                # Section header
+                hdr = Gtk.Label(label=label, xalign=0)
+                hdr.add_css_class("ctx-section")
+                box.append(hdr)
+            else:
+                btn = Gtk.Button(label=label)
+                btn.add_css_class("ctx-item")
+                btn.set_has_frame(False)
+                # capture cb in closure
+                btn.connect("clicked", lambda _, f=cb: (self._ctx_popover.popdown(), f()))
+                box.append(btn)
+
+        self._ctx_popover = Gtk.Popover()
+        self._ctx_popover.set_child(box)
+        self._ctx_popover.set_autohide(True)
+        self._ctx_popover.set_has_arrow(False)
+        self._ctx_popover.set_parent(self._log_view)
+
+        # Suppress the default TextView right-click menu entirely
+        self._log_view.set_extra_menu(None)
+
+        rc = Gtk.GestureClick()
+        rc.set_button(3)
+        rc.set_exclusive(True)
+        rc.connect("pressed", self._on_log_right_click)
+        self._log_view.add_controller(rc)
 
     def _build_statusbar(self, c: dict) -> Gtk.Box:
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -265,7 +312,8 @@ class ElkWindow(Gtk.ApplicationWindow):
 
         hints = Gtk.Label(
             label="[Ctrl+R] Search  [Ctrl+F] Filter  [Ctrl+S] Query"
-                  "  [Space] Highlight  [Ctrl+Space] Clear HL")
+                  "  [Space] HL  [Ctrl+Space] Clear HL"
+                  "  [A/D] ±filter  [Shift+A/D] ±query")
         hints.add_css_class("dim")
         bar.append(hints)
 
@@ -298,6 +346,16 @@ class ElkWindow(Gtk.ApplicationWindow):
     def _set_status(self, text: str) -> None:
         GLib.idle_add(self._status_lbl.set_label, text)
 
+    # ── Context menu ──────────────────────────────────────────────────────────
+
+    def _on_log_right_click(self, gesture, n_press, x, y) -> None:
+        # Claim the event so GTK's built-in TextView menu doesn't appear
+        gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+        rect = Gdk.Rectangle()
+        rect.x, rect.y, rect.width, rect.height = int(x), int(y), 1, 1
+        self._ctx_popover.set_pointing_to(rect)
+        self._ctx_popover.popup()
+
     # ── Shortcuts ─────────────────────────────────────────────────────────────
 
     def _setup_shortcuts(self) -> None:
@@ -322,6 +380,14 @@ class ElkWindow(Gtk.ApplicationWindow):
             self._start_fetch(); return True
         if keyval == Gdk.KEY_space and not mod:
             return self._try_add_highlight()
+        shift = state & Gdk.ModifierType.SHIFT_MASK
+        if not mod and keyval in (Gdk.KEY_a, Gdk.KEY_A,
+                                   Gdk.KEY_d, Gdk.KEY_D):
+            include = keyval in (Gdk.KEY_a, Gdk.KEY_A)
+            if shift:
+                return self._try_add_query(include=include)
+            else:
+                return self._try_add_filter(include=include)
         return False
 
     def _on_query_key(self, _ctrl, keyval, _kc, state):
@@ -390,6 +456,53 @@ class ElkWindow(Gtk.ApplicationWindow):
         self._highlighters.clear()
         self._log_view.refresh_highlights(self._highlighters)
         self._update_hl_label()
+
+    # ── Quick filter via A / D ────────────────────────────────────────────────
+
+    def _try_add_query(self, include: bool) -> bool:
+        """Shift+A / Shift+D — append +"text" or -"text" to the Lucene query."""
+        text = self._log_view.get_selected_text()
+        if not text:
+            focused = self.get_focus()
+            text = self._get_label_selection(focused)
+        if not text:
+            return False
+
+        prefix = "+" if include else "-"
+        token  = f'{prefix}"{text}"'
+
+        buf     = self._query_buf
+        current = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False).strip()
+        new_val = (current + " " + token).strip() if current else token
+        buf.set_text(new_val)
+
+        # Move cursor to end
+        buf.place_cursor(buf.get_end_iter())
+        self._query_view.grab_focus()
+        return True
+
+    def _try_add_filter(self, include: bool) -> bool:
+        """A = append +word, D = append -word to the filter entry."""
+        text = self._log_view.get_selected_text()
+        if not text:
+            focused = self.get_focus()
+            text = self._get_label_selection(focused)
+        if not text:
+            return False
+
+        prefix   = "+" if include else "-"
+        token    = f"{prefix}{text}"
+        current  = self._filter_ent.get_text().strip()
+        # Avoid duplicates
+        tokens   = current.split()
+        if token in tokens:
+            return True
+        new_val  = (current + " " + token).strip() if current else token
+        self._filter_ent.set_text(new_val)
+        # Trigger debounced filter immediately
+        self._filter_ent.set_position(-1)
+        self._filter_fire()
+        return True
 
     # ── Query history ─────────────────────────────────────────────────────────
 

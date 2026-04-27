@@ -134,7 +134,7 @@ class LogView(Gtk.TextView):
 
             # ── Header ───────────────────────────────────────────────────────
             local_t  = utc_to_local_ms(log["time"])
-            hdr_text = f" ▸  {local_t}   {log['time']}\n"
+            hdr_text = f" {local_t} {log['time']}\n"
             self._buf.insert_with_tags_by_name(end, hdr_text, _TAG_HEADER)
 
             # ── Body ─────────────────────────────────────────────────────────
@@ -182,27 +182,39 @@ class LogView(Gtk.TextView):
     # ── Internal ──────────────────────────────────────────────────────────────
 
     def _apply_level_colors(self) -> None:
-        """Color [error]/[info]/[warn] tokens in header lines."""
-        s_all, e_all = self._buf.get_bounds()
-        full = self._buf.get_text(s_all, e_all, False)
+        """Color [error]/[info]/[warn] tokens using TextIter search."""
         for keyword, (tag_name, _) in _LEVEL_TAGS.items():
-            for m in re.finditer(
-                    r'\[' + keyword + r'\]', full, re.IGNORECASE):
-                s = self._buf.get_iter_at_offset(m.start())
-                e = self._buf.get_iter_at_offset(m.end())
-                self._buf.apply_tag_by_name(tag_name, s, e)
+            needle = f"[{keyword}]"
+            self._apply_tag_for_word(needle, tag_name, case_sensitive=False)
 
     def _apply_highlights_internal(self) -> None:
         if not self._highlighters:
             return
-        s_all, e_all = self._buf.get_bounds()
-        full = self._buf.get_text(s_all, e_all, False)
         for word, color in self._highlighters.items():
             tag = self._get_or_create_hl_tag(word, color)
-            for m in re.finditer(re.escape(word), full, re.IGNORECASE):
-                s = self._buf.get_iter_at_offset(m.start())
-                e = self._buf.get_iter_at_offset(m.end())
-                self._buf.apply_tag(tag, s, e)
+            self._apply_tag_for_word(word, tag.get_property("name"),
+                                     case_sensitive=False)
+
+    def _apply_tag_for_word(self, word: str, tag_name: str,
+                            case_sensitive: bool = True) -> None:
+        """
+        Walk the buffer with forward_search and apply *tag_name* at every
+        occurrence of *word*.  This uses buffer character offsets directly
+        so it is immune to the invisible-tag / get_text offset mismatch.
+        """
+        flags = Gtk.TextSearchFlags.VISIBLE_ONLY
+        if not case_sensitive:
+            flags |= Gtk.TextSearchFlags.CASE_INSENSITIVE
+
+        s_all, e_all = self._buf.get_bounds()
+        cursor = s_all
+        while True:
+            result = cursor.forward_search(word, flags, e_all)
+            if result is None:
+                break
+            match_s, match_e = result
+            self._buf.apply_tag_by_name(tag_name, match_s, match_e)
+            cursor = match_e
 
 
 # ── Filter helper ─────────────────────────────────────────────────────────────
