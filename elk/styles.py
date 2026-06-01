@@ -92,6 +92,10 @@ button:active { background: #4a90d9; color: #ffffff; }
 .btn-search { background: #4a90d9; color: #ffffff; font-weight: bold; }
 .btn-search:hover { background: #357abd; }
 
+/* auto-refresh toggle — green while active */
+.btn-auto:checked        { background: #27ae60; color: #ffffff; font-weight: bold; }
+.btn-auto:checked:hover  { background: #219150; }
+
 label.dim     { color: #777777; }
 label.hl-info { color: #555555; font-style: italic; }
 

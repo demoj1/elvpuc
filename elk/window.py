@@ -5,7 +5,7 @@ import threading
 
 import gi
 gi.require_version("Gtk", "4.0")
-from gi.repository import Gtk, Gdk, GLib
+from gi.repository import Gtk, Gdk, GLib, Gio
 
 import elk.config  as cfg
 import elk.elastic as elastic
@@ -16,6 +16,9 @@ from elk.widgets.log_view  import LogView
 
 # Debounce delay for the offline filter (ms)
 _FILTER_DEBOUNCE_MS = 120
+
+# Auto-refresh interval (s)
+_AUTO_REFRESH_S = 10
 
 
 class ElkWindow(Gtk.ApplicationWindow):
@@ -33,6 +36,7 @@ class ElkWindow(Gtk.ApplicationWindow):
         self._is_loading:    bool           = False
         self._data_queue:    queue.Queue    = queue.Queue()
         self._filter_timer:  int            = 0   # GLib source id
+        self._auto_timer:    int            = 0   # GLib source id
 
         self._build_ui()
         self._setup_shortcuts()
@@ -41,6 +45,9 @@ class ElkWindow(Gtk.ApplicationWindow):
     # ── Config ────────────────────────────────────────────────────────────────
 
     def _on_close(self, *_):
+        if self._auto_timer:
+            GLib.source_remove(self._auto_timer)
+            self._auto_timer = 0
         cfg.save({
             "url":            self._url_ent.get_text(),
             "index":          self._idx_ent.get_text(),
@@ -142,6 +149,15 @@ class ElkWindow(Gtk.ApplicationWindow):
         self._search_btn.set_valign(Gtk.Align.CENTER)
         self._search_btn.connect("clicked", lambda *_: self._start_fetch())
         row.append(self._search_btn)
+
+        # Auto-refresh toggle — re-runs the search every _AUTO_REFRESH_S seconds
+        self._auto_btn = Gtk.ToggleButton(label=f"Auto ⟳ {_AUTO_REFRESH_S}s")
+        self._auto_btn.add_css_class("btn-auto")
+        self._auto_btn.set_valign(Gtk.Align.CENTER)
+        self._auto_btn.set_tooltip_text(
+            f"Auto-refresh every {_AUTO_REFRESH_S} seconds")
+        self._auto_btn.connect("toggled", self._on_auto_toggled)
+        row.append(self._auto_btn)
 
         # Alt+L → Limit
         lim_lbl = Gtk.Label(label="_Limit:", use_underline=True)
@@ -251,47 +267,56 @@ class ElkWindow(Gtk.ApplicationWindow):
         return scroll
 
     def _build_context_menu(self) -> None:
-        """Right-click popover with plain Gtk.Box — no Gio.Menu overhead."""
-        items = [
-            ("Offline filter", None),
-            ("+filter   [A]",        lambda: self._try_add_filter(True)),
-            ("−filter   [D]",        lambda: self._try_add_filter(False)),
-            ("Lucene query", None),
-            ('+query   [Shift+A]',   lambda: self._try_add_query(True)),
-            ('−query   [Shift+D]',   lambda: self._try_add_query(False)),
-            ("Highlight", None),
-            ("Toggle highlight   [Space]", lambda: self._try_add_highlight()),
+        """
+        Right-click menu — rebuilt on a Gio.Menu model + Gtk.PopoverMenu.
+
+        The model/action approach avoids the manual button wiring and the
+        autohide-grab races of the old hand-rolled popover (which could lock
+        up the TextView).  Actions live in a 'ctx' group on the window, so the
+        menu items resolve them through the normal widget action muxer.
+        """
+        actions = Gio.SimpleActionGroup()
+        specs = [
+            ("filter-inc", lambda: self._try_add_filter(True)),
+            ("filter-exc", lambda: self._try_add_filter(False)),
+            ("query-inc",  lambda: self._try_add_query(True)),
+            ("query-exc",  lambda: self._try_add_query(False)),
+            ("highlight",  lambda: self._try_add_highlight()),
         ]
+        for name, cb in specs:
+            act = Gio.SimpleAction.new(name, None)
+            act.connect("activate", lambda _a, _p, f=cb: f())
+            actions.add_action(act)
+        self.insert_action_group("ctx", actions)
 
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        box.add_css_class("ctx-menu")
+        menu = Gio.Menu()
 
-        for label, cb in items:
-            if cb is None:
-                # Section header
-                hdr = Gtk.Label(label=label, xalign=0)
-                hdr.add_css_class("ctx-section")
-                box.append(hdr)
-            else:
-                btn = Gtk.Button(label=label)
-                btn.add_css_class("ctx-item")
-                btn.set_has_frame(False)
-                # capture cb in closure
-                btn.connect("clicked", lambda _, f=cb: (self._ctx_popover.popdown(), f()))
-                box.append(btn)
+        sec_f = Gio.Menu()
+        sec_f.append("+ filter (include)   [A]", "ctx.filter-inc")
+        sec_f.append("− filter (exclude)   [D]", "ctx.filter-exc")
+        menu.append_section("Offline filter", sec_f)
 
-        self._ctx_popover = Gtk.Popover()
-        self._ctx_popover.set_child(box)
-        self._ctx_popover.set_autohide(True)
-        self._ctx_popover.set_has_arrow(False)
+        sec_q = Gio.Menu()
+        sec_q.append("+ query (include)   [Shift+A]", "ctx.query-inc")
+        sec_q.append("− query (exclude)   [Shift+D]", "ctx.query-exc")
+        menu.append_section("Lucene query", sec_q)
+
+        sec_h = Gio.Menu()
+        sec_h.append("Toggle highlight   [Space]", "ctx.highlight")
+        menu.append_section("Highlight", sec_h)
+
+        self._ctx_popover = Gtk.PopoverMenu.new_from_model(menu)
         self._ctx_popover.set_parent(self._log_view)
+        self._ctx_popover.set_has_arrow(False)
 
         # Suppress the default TextView right-click menu entirely
         self._log_view.set_extra_menu(None)
 
         rc = Gtk.GestureClick()
         rc.set_button(3)
-        rc.set_exclusive(True)
+        # CAPTURE = run before the TextView's own button-3 handler so it can't
+        # steal the press / reset the selection we act on.
+        rc.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         rc.connect("pressed", self._on_log_right_click)
         self._log_view.add_controller(rc)
 
@@ -365,29 +390,48 @@ class ElkWindow(Gtk.ApplicationWindow):
         ctrl.connect("key-pressed", self._on_global_key)
         self.add_controller(ctrl)
 
-    def _on_global_key(self, _ctrl, keyval, _kc, state):
-        mod = state & Gdk.ModifierType.CONTROL_MASK
-        if mod:
-            if keyval in (Gdk.KEY_r, Gdk.KEY_R):
+    def _latin_keyval(self, keycode: int) -> int:
+        """
+        Map a hardware *keycode* to its Latin (a–z) keyval, scanning every
+        keyboard group.  This makes letter shortcuts work regardless of the
+        active layout — e.g. physical 'A' on a Russian ЙЦУКЕН layout reports
+        the keyval for 'ф', but the same key still carries 'a' in the Latin
+        group, which is what we match against.
+        """
+        ok, _keys, keyvals = self.get_display().map_keycode(keycode)
+        if not ok:
+            return 0
+        for kv in keyvals:
+            if Gdk.KEY_a <= kv <= Gdk.KEY_z:
+                return kv
+        return 0
+
+    def _on_global_key(self, _ctrl, keyval, keycode, state):
+        ctrl  = state & Gdk.ModifierType.CONTROL_MASK
+        shift = state & Gdk.ModifierType.SHIFT_MASK
+        # Layout-independent keyval for letter shortcuts
+        lk = self._latin_keyval(keycode) or keyval
+
+        if ctrl:
+            if lk == Gdk.KEY_r:
                 self._start_fetch();           return True
-            if keyval in (Gdk.KEY_f, Gdk.KEY_F):
+            if lk == Gdk.KEY_f:
                 self._filter_ent.grab_focus(); return True
-            if keyval in (Gdk.KEY_s, Gdk.KEY_S):
+            if lk == Gdk.KEY_s:
                 self._query_view.grab_focus(); return True
             if keyval == Gdk.KEY_space:
                 self._clear_highlights();      return True
+            return False
+
         if keyval == Gdk.KEY_F5:
             self._start_fetch(); return True
-        if keyval == Gdk.KEY_space and not mod:
+        if keyval == Gdk.KEY_space:
             return self._try_add_highlight()
-        shift = state & Gdk.ModifierType.SHIFT_MASK
-        if not mod and keyval in (Gdk.KEY_a, Gdk.KEY_A,
-                                   Gdk.KEY_d, Gdk.KEY_D):
-            include = keyval in (Gdk.KEY_a, Gdk.KEY_A)
+        if lk in (Gdk.KEY_a, Gdk.KEY_d):
+            include = lk == Gdk.KEY_a
             if shift:
                 return self._try_add_query(include=include)
-            else:
-                return self._try_add_filter(include=include)
+            return self._try_add_filter(include=include)
         return False
 
     def _on_query_key(self, _ctrl, keyval, _kc, state):
@@ -558,6 +602,24 @@ class ElkWindow(Gtk.ApplicationWindow):
         self._from_ent.set_text(t_from)
         self._to_ent.set_text(t_to)
         self._start_fetch()
+
+    # ── Auto-refresh ───────────────────────────────────────────────────────────
+
+    def _on_auto_toggled(self, btn: Gtk.ToggleButton) -> None:
+        if btn.get_active():
+            self._start_fetch()
+            self._auto_timer = GLib.timeout_add_seconds(
+                _AUTO_REFRESH_S, self._auto_tick)
+        elif self._auto_timer:
+            GLib.source_remove(self._auto_timer)
+            self._auto_timer = 0
+
+    def _auto_tick(self) -> bool:
+        if not self._auto_btn.get_active():
+            self._auto_timer = 0
+            return False               # stop the timer
+        self._start_fetch()            # no-op if a fetch is already running
+        return True                    # keep ticking
 
     # ── Fetch ─────────────────────────────────────────────────────────────────
 
