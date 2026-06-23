@@ -302,7 +302,7 @@ class ElkWindow(Gtk.ApplicationWindow):
         menu.append_section("Lucene query", sec_q)
 
         sec_h = Gio.Menu()
-        sec_h.append("Toggle highlight   [Space]", "ctx.highlight")
+        sec_h.append("Toggle highlight   [C-Space]", "ctx.highlight")
         menu.append_section("Highlight", sec_h)
 
         self._ctx_popover = Gtk.PopoverMenu.new_from_model(menu)
@@ -337,7 +337,7 @@ class ElkWindow(Gtk.ApplicationWindow):
 
         hints = Gtk.Label(
             label="[Ctrl+R] Search  [Ctrl+F] Filter  [Ctrl+S] Query"
-                  "  [Space] HL  [Ctrl+Space] Clear HL"
+                  "  [Space] HL"
                   "  [A/D] ±filter  [Shift+A/D] ±query")
         hints.add_css_class("dim")
         bar.append(hints)
@@ -420,13 +420,11 @@ class ElkWindow(Gtk.ApplicationWindow):
             if lk == Gdk.KEY_s:
                 self._query_view.grab_focus(); return True
             if keyval == Gdk.KEY_space:
-                self._clear_highlights();      return True
+                return self._try_add_highlight()
             return False
 
         if keyval == Gdk.KEY_F5:
             self._start_fetch(); return True
-        if keyval == Gdk.KEY_space:
-            return self._try_add_highlight()
         if lk in (Gdk.KEY_a, Gdk.KEY_d):
             include = lk == Gdk.KEY_a
             if shift:
@@ -459,7 +457,7 @@ class ElkWindow(Gtk.ApplicationWindow):
     def _update_hl_label(self) -> None:
         if not self._highlighters:
             self._hl_label.set_label(
-                "No highlights  [Space] add selection  [Ctrl+Space] clear")
+                "No highlights  [C-Space] add selection")
         else:
             parts = [
                 f'<span background="{color}"> {GLib.markup_escape_text(w)} </span>'
