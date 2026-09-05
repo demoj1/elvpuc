@@ -1,7 +1,10 @@
 """Elasticsearch query logic — runs in a background thread."""
 
 import json
+import logging
 import requests
+
+log = logging.getLogger("elk")
 
 
 def build_query(q: str, t_from: str, t_to: str, limit: int) -> dict:
@@ -36,12 +39,15 @@ def fetch(url: str, index: str, q: str, t_from: str, t_to: str,
     """
     endpoint = f"{url.rstrip('/')}/{index}/_search"
     body     = build_query(q, t_from, t_to, limit)
+    log.debug("elastic.fetch: POST %s (timeout=%ss)", endpoint, timeout)
     response = requests.post(endpoint, json=body, timeout=timeout).json()
+    log.debug("elastic.fetch: response keys=%s", list(response.keys()))
 
     hits = [
         {
             "t": h["_source"].get("@timestamp", "---"),
             "m": h["_source"].get("message", json.dumps(h["_source"], indent=2)),
+            "s": h["_source"],
         }
         for h in response.get("hits", {}).get("hits", [])
     ]

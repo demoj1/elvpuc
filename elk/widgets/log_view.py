@@ -179,6 +179,22 @@ class LogView(Gtk.TextView):
         s, e = self._buf.get_selection_bounds()
         return self._buf.get_text(s, e, False).strip() or None
 
+    def log_at_location(self, wx: float, wy: float) -> dict | None:
+        """Return the log entry under widget-space coords (wx, wy), or None."""
+        bx, by = self.window_to_buffer_coords(
+            Gtk.TextWindowType.WIDGET, int(wx), int(wy)
+        )
+        ok, it = self.get_iter_at_location(bx, by)
+        if not ok:
+            return None
+        off = it.get_offset()
+        for i, (sm, em) in enumerate(self._log_marks):
+            s = self._buf.get_iter_at_mark(sm).get_offset()
+            e = self._buf.get_iter_at_mark(em).get_offset()
+            if s <= off < e:
+                return self._logs[i]
+        return None
+
     # ── Internal ──────────────────────────────────────────────────────────────
 
     def _apply_level_colors(self) -> None:

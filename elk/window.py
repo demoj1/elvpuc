@@ -1,7 +1,11 @@
 """ElkWindow — the main GTK4 ApplicationWindow."""
 
+import json
+import logging
 import queue
 import threading
+
+log = logging.getLogger("elk")
 
 import gi
 gi.require_version("Gtk", "4.0")
@@ -23,11 +27,13 @@ _AUTO_REFRESH_S = 10
 
 class ElkWindow(Gtk.ApplicationWindow):
     def __init__(self, app):
+        log.debug("ElkWindow.__init__: begin")
         super().__init__(application=app, title="Elastic Log Viewer")
         self.set_default_size(1400, 900)
 
         self._conf:          dict           = cfg.load()
         self._all_logs:      list[dict]     = []
+        self._ctx_log:       dict | None    = None
         self._hist_agg:      list[dict]     = []
         self._hist_agg_sum:  int            = 0
         self._query_history: list[str]      = self._conf["query_history"]
@@ -89,6 +95,7 @@ class ElkWindow(Gtk.ApplicationWindow):
         root.append(self._build_hl_bar())
         root.append(self._build_log_area())
         root.append(self._build_statusbar(c))
+        log.debug("_build_ui: done")
 
     def _build_toolbar(self, c: dict) -> Gtk.Box:
         toolbar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
@@ -282,6 +289,7 @@ class ElkWindow(Gtk.ApplicationWindow):
             ("query-inc",  lambda: self._try_add_query(True)),
             ("query-exc",  lambda: self._try_add_query(False)),
             ("highlight",  lambda: self._try_add_highlight()),
+            ("details",    lambda: self._ctx_log and self._show_record_details(self._ctx_log)),
         ]
         for name, cb in specs:
             act = Gio.SimpleAction.new(name, None)
@@ -304,6 +312,10 @@ class ElkWindow(Gtk.ApplicationWindow):
         sec_h = Gio.Menu()
         sec_h.append("Toggle highlight   [C-Space]", "ctx.highlight")
         menu.append_section("Highlight", sec_h)
+
+        sec_d = Gio.Menu()
+        sec_d.append("🔍 Показать все поля", "ctx.details")
+        menu.append_section("Record", sec_d)
 
         self._ctx_popover = Gtk.PopoverMenu.new_from_model(menu)
         self._ctx_popover.set_parent(self._log_view)
@@ -376,10 +388,50 @@ class ElkWindow(Gtk.ApplicationWindow):
     def _on_log_right_click(self, gesture, n_press, x, y) -> None:
         # Claim the event so GTK's built-in TextView menu doesn't appear
         gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+        # Remember the record under the cursor for the "показать все поля" action
+        self._ctx_log = self._log_view.log_at_location(x, y)
         rect = Gdk.Rectangle()
         rect.x, rect.y, rect.width, rect.height = int(x), int(y), 1, 1
         self._ctx_popover.set_pointing_to(rect)
         self._ctx_popover.popup()
+
+    def _show_record_details(self, log: dict) -> None:
+        """Popup window with the full Elasticsearch record (all fields)."""
+        src = log.get("src")
+        if src is not None:
+            text = json.dumps(src, indent=2, ensure_ascii=False, sort_keys=True)
+        else:
+            text = log.get("msg") or "—"
+
+        win = Gtk.Window(title="Запись целиком", transient_for=self, modal=False)
+        win.set_default_size(820, 640)
+
+        tv = Gtk.TextView()
+        tv.set_editable(False)
+        tv.set_monospace(True)
+        tv.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        tv.set_left_margin(8); tv.set_right_margin(8)
+        tv.set_top_margin(6);  tv.set_bottom_margin(6)
+        tv.get_buffer().set_text(text)
+
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_child(tv)
+        win.set_child(scroll)
+
+        # Keep a reference so the window isn't garbage-collected immediately.
+        if not hasattr(self, "_detail_wins"):
+            self._detail_wins = []
+        self._detail_wins.append(win)
+        win.connect("close-request", lambda w: (self._detail_wins.remove(w), False)[1])
+
+        # Esc closes the window
+        key = Gtk.EventControllerKey()
+        key.connect(
+            "key-pressed",
+            lambda _c, kv, _kc, _st: win.close() if kv == Gdk.KEY_Escape else False,
+        )
+        win.add_controller(key)
+        win.present()
 
     # ── Shortcuts ─────────────────────────────────────────────────────────────
 
@@ -623,6 +675,7 @@ class ElkWindow(Gtk.ApplicationWindow):
 
     def _start_fetch(self) -> None:
         if self._is_loading:
+            log.debug("start_fetch: skipped (already loading)")
             return
         self._is_loading = True
         self._search_btn.set_sensitive(False)
@@ -637,17 +690,23 @@ class ElkWindow(Gtk.ApplicationWindow):
             t_to   = self._to_ent.get_text().strip(),
         )
         self._add_to_history(params["q"])
+        log.debug("start_fetch: url=%s index=%s limit=%s q=%r from=%s to=%s",
+                  params["url"], params["index"], params["limit"],
+                  params["q"], params["t_from"], params["t_to"])
         threading.Thread(target=self._worker, args=(params,), daemon=True).start()
         GLib.timeout_add(100, self._poll_queue)
 
     def _worker(self, p: dict) -> None:
         try:
+            log.debug("worker: querying elastic…")
             hits, buckets = elastic.fetch(
                 p["url"], p["index"], p["q"],
                 p["t_from"], p["t_to"], p["limit"],
             )
+            log.debug("worker: got %d hits, %d buckets", len(hits), len(buckets))
             self._data_queue.put(("OK", hits, buckets))
         except Exception as e:
+            log.exception("worker: fetch failed")
             self._data_queue.put(("ERR", str(e), []))
 
     def _poll_queue(self) -> bool:
@@ -656,13 +715,15 @@ class ElkWindow(Gtk.ApplicationWindow):
         except queue.Empty:
             return True
 
+        log.debug("poll_queue: status=%s payload_len=%s",
+                  status, len(payload) if isinstance(payload, list) else payload)
         self._is_loading = False
         self._search_btn.set_sensitive(True)
 
         if status == "OK":
             self._hist_agg     = agg
             self._hist_agg_sum = sum(x.get("doc_count", 0) for x in agg)
-            self._all_logs = [{"time": x["t"], "msg": x["m"]} for x in payload]
+            self._all_logs = [{"time": x["t"], "msg": x["m"], "src": x.get("s")} for x in payload]
             self._render_logs()
         else:
             dlg = Gtk.MessageDialog(
