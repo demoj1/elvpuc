@@ -9,7 +9,7 @@ log = logging.getLogger("elk")
 
 import gi
 gi.require_version("Gtk", "4.0")
-from gi.repository import Gtk, Gdk, GLib, Gio
+from gi.repository import Gtk, Gdk, GLib, Gio, Pango
 
 import elk.config  as cfg
 import elk.elastic as elastic
@@ -341,6 +341,7 @@ class ElkWindow(Gtk.ApplicationWindow):
         flt_lbl.set_margin_end(2)
         self._filter_ent = self._entry(c["offline_filter"])
         self._filter_ent.set_hexpand(True)
+        self._filter_ent.add_css_class("entry-filter")
         # debounced: schedule _render_logs 120ms after last keystroke
         self._filter_ent.connect("changed", self._on_filter_changed)
         flt_lbl.set_mnemonic_widget(self._filter_ent)
@@ -352,6 +353,8 @@ class ElkWindow(Gtk.ApplicationWindow):
                   "  [Ctrl+Space] HL"
                   "  [A/D] ±filter  [Shift+A/D] ±query  [V] record")
         hints.add_css_class("dim")
+        # Shrinks first on a narrow window, giving the space to the filter
+        hints.set_ellipsize(Pango.EllipsizeMode.END)
         bar.append(hints)
 
         self._status_lbl = Gtk.Label(label="Ready")

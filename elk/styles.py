@@ -78,6 +78,7 @@ scale slider {
 .entry-index { min-width: 140px; }
 .entry-limit { min-width:  44px; max-width:  50px; }
 .entry-time  { min-width: 190px; max-width: 190px; }
+.entry-filter { min-width: 450px; }
 
 button {
     background: #dde4ee;
