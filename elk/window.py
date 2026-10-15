@@ -314,7 +314,7 @@ class ElkWindow(Gtk.ApplicationWindow):
         menu.append_section("Highlight", sec_h)
 
         sec_d = Gio.Menu()
-        sec_d.append("🔍 Show all fields", "ctx.details")
+        sec_d.append("🔍 Show all fields   [V]", "ctx.details")
         menu.append_section("Record", sec_d)
 
         self._ctx_popover = Gtk.PopoverMenu.new_from_model(menu)
@@ -350,7 +350,7 @@ class ElkWindow(Gtk.ApplicationWindow):
         hints = Gtk.Label(
             label="[Ctrl+R] Search  [Ctrl+F] Filter  [Ctrl+S] Query"
                   "  [Ctrl+Space] HL"
-                  "  [A/D] ±filter  [Shift+A/D] ±query")
+                  "  [A/D] ±filter  [Shift+A/D] ±query  [V] record")
         hints.add_css_class("dim")
         bar.append(hints)
 
@@ -477,12 +477,24 @@ class ElkWindow(Gtk.ApplicationWindow):
 
         if keyval == Gdk.KEY_F5:
             self._start_fetch(); return True
+        if lk == Gdk.KEY_v and not shift:
+            return self._try_show_details()
         if lk in (Gdk.KEY_a, Gdk.KEY_d):
             include = lk == Gdk.KEY_a
             if shift:
                 return self._try_add_query(include=include)
             return self._try_add_filter(include=include)
         return False
+
+    def _try_show_details(self) -> bool:
+        """V = full record under the text cursor; only while the log has focus."""
+        if self.get_focus() is not self._log_view:
+            return False
+        log = self._log_view.log_at_cursor()
+        if not log:
+            return False
+        self._show_record_details(log)
+        return True
 
     def _on_query_key(self, _ctrl, keyval, _kc, state):
         if (state & Gdk.ModifierType.CONTROL_MASK) and \

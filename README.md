@@ -35,13 +35,14 @@ Hotkeys:
 | `A` / `D` | Add `+selection` / `-selection` to offline filter |
 | `Shift+A` / `Shift+D` | Add `+"selection"` / `-"selection"` to Lucene query |
 | `Alt+U/I/S/L/F/T` | Focus URL / Index / Search / Limit / From / To |
+| `V` | Show full record under text cursor (focus in log) |
 | `Esc` | Close full record window |
 
 Right click (on log):
 + `+ filter` / `− filter` — same as `A` / `D`
 + `+ query` / `− query` — same as `Shift+A` / `Shift+D`
 + `Toggle highlight` — same as `Ctrl+Space`
-+ `Show all fields` — full record under cursor, all fields
++ `Show all fields` — full record under cursor, all fields. Same as `V`
 
 Usage:
 

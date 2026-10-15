@@ -187,7 +187,14 @@ class LogView(Gtk.TextView):
         ok, it = self.get_iter_at_location(bx, by)
         if not ok:
             return None
-        off = it.get_offset()
+        return self._log_at_offset(it.get_offset())
+
+    def log_at_cursor(self) -> dict | None:
+        """Return the log entry under the text cursor (insert mark), or None."""
+        it = self._buf.get_iter_at_mark(self._buf.get_insert())
+        return self._log_at_offset(it.get_offset())
+
+    def _log_at_offset(self, off: int) -> dict | None:
         for i, (sm, em) in enumerate(self._log_marks):
             s = self._buf.get_iter_at_mark(sm).get_offset()
             e = self._buf.get_iter_at_mark(em).get_offset()
