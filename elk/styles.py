@@ -73,6 +73,8 @@ scale slider {
 
 /* field widths — in px, independent of font size */
 .entry-url   { max-width: 180px; }
+/* Hide credentials in the URL (screenshots) until the field is focused */
+.entry-url:not(:focus-within) > text { filter: blur(5px); }
 .entry-index { min-width: 140px; }
 .entry-limit { min-width:  44px; max-width:  50px; }
 .entry-time  { min-width: 190px; max-width: 190px; }
