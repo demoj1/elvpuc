@@ -65,21 +65,18 @@ def apply_highlights(text: str, highlighters: dict[str, str]) -> str:
     return escaped
 
 
-def filter_matches(log: dict, tokens: list[str]) -> bool:
+def filter_matches(text: str, tokens: list[str]) -> bool:
     """
-    Return True if *log* passes the offline filter.
+    Return True if lowercased *text* passes the offline filter.
 
     Token syntax:
       ``+word``  — must contain *word*
       ``-word``  — must NOT contain *word*
       ``word``   — must contain *word*
     """
-    if not tokens:
-        return True
-    full = (log["time"] + " " + log["msg"]).lower()
     return all(
-        (t[1:] in full     if t.startswith("+") else
-         t[1:] not in full if t.startswith("-") else
-         t in full)
+        (t[1:] in text     if t.startswith("+") else
+         t[1:] not in text if t.startswith("-") else
+         t in text)
         for t in tokens
     )

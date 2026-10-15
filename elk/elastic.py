@@ -6,6 +6,9 @@ import requests
 
 log = logging.getLogger("elk")
 
+# Keep-alive: reuse the TCP/TLS connection between searches (and auto-refresh)
+_session = requests.Session()
+
 
 def build_query(q: str, t_from: str, t_to: str, limit: int) -> dict:
     return {
@@ -40,7 +43,7 @@ def fetch(url: str, index: str, q: str, t_from: str, t_to: str,
     endpoint = f"{url.rstrip('/')}/{index}/_search"
     body     = build_query(q, t_from, t_to, limit)
     log.debug("elastic.fetch: POST %s (timeout=%ss)", endpoint, timeout)
-    response = requests.post(endpoint, json=body, timeout=timeout).json()
+    response = _session.post(endpoint, json=body, timeout=timeout).json()
     log.debug("elastic.fetch: response keys=%s", list(response.keys()))
 
     hits = [

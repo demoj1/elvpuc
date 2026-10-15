@@ -6,22 +6,13 @@ import gi
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk, Gdk, GLib, Pango
 
-from elk.utils import utc_to_local_ms
+from elk.utils import utc_to_local_ms, filter_matches
 
 _TAG_HEADER  = "hdr"
 _TAG_BODY    = "body"
 _TAG_SEP     = "sep"
 _TAG_HIDDEN  = "hidden"
 _HL_PREFIX   = "hl:"
-
-# Log-level accent colors (matched in the first line of message)
-_LEVEL_TAGS = {
-    "error":   ("lvl:error",   "#c0392b"),
-    "warning": ("lvl:warning", "#e67e22"),
-    "warn":    ("lvl:warn",    "#e67e22"),
-    "info":    ("lvl:info",    "#27ae60"),
-    "debug":   ("lvl:debug",   "#2980b9"),
-}
 
 
 class LogView(Gtk.TextView):
@@ -45,6 +36,8 @@ class LogView(Gtk.TextView):
         self._logs:         list[dict]     = []
         self._highlighters: dict[str, str] = {}
         self._log_marks:    list[tuple]    = []   # (start_mark, end_mark) per log
+        self._search_text:  list[str]      = []   # lowercased "time msg" per log
+        self._visible:      list[bool]     = []   # current filter state per log
 
         self._setup_tags()
 
@@ -85,10 +78,6 @@ class LogView(Gtk.TextView):
         # Hidden (filtered out)
         add(_TAG_HIDDEN, invisible=True)
 
-        # Log-level accent tags
-        for tag_name, color in _LEVEL_TAGS.values():
-            add(tag_name, foreground=color, weight=Pango.Weight.BOLD)
-
     # ── Highlight tag management ───────────────────────────────────────────────
 
     def _get_or_create_hl_tag(self, word: str, color: str) -> Gtk.TextTag:
@@ -122,10 +111,13 @@ class LogView(Gtk.TextView):
         self._logs         = logs
         self._highlighters = highlighters
         self._log_marks    = []
+        self._search_text  = [(l["time"] + " " + l["msg"]).lower() for l in logs]
+        self._visible      = [True] * len(logs)
 
-        # Freeze notifications to avoid incremental redraws during insert
-        self._buf.set_text("")
+        # Build into a detached buffer (shared tag table) and swap it in at
+        # the end: no layout invalidation per insert while the view watches.
         self._remove_all_hl_tags()
+        self._buf = Gtk.TextBuffer(tag_table=self._buf.get_tag_table())
 
         end = self._buf.get_end_iter()
 
@@ -144,27 +136,43 @@ class LogView(Gtk.TextView):
             # ── Separator line ────────────────────────────────────────────────
             self._buf.insert_with_tags_by_name(end, "\n", _TAG_SEP)
 
-            end_mark = self._buf.create_mark(None, end, False)
+            # Left gravity: stays put when the next entry is inserted at `end`
+            end_mark = self._buf.create_mark(None, end, True)
             self._log_marks.append((start_mark, end_mark))
 
-        self._apply_level_colors()
         self._apply_highlights_internal()
+        self.set_buffer(self._buf)
 
     def apply_filter(self, tokens: list[str]) -> int:
-        """Show/hide entries via the 'hidden' tag.  Returns visible count."""
+        """
+        Show/hide entries via the 'hidden' tag.  Returns visible count.
+        Only entries whose visibility flipped get a tag op.
+        """
         if not self._log_marks:
             return 0
         visible = 0
-        for i, log in enumerate(self._logs):
-            sm, em = self._log_marks[i]
-            s = self._buf.get_iter_at_mark(sm)
-            e = self._buf.get_iter_at_mark(em)
-            if _filter_match(log, tokens):
-                self._buf.remove_tag_by_name(_TAG_HIDDEN, s, e)
-                visible += 1
-            else:
-                self._buf.apply_tag_by_name(_TAG_HIDDEN, s, e)
+        run_start, run_show = -1, False   # pending run of same-direction flips
+        for i, text in enumerate(self._search_text + [None]):
+            show = text is not None and filter_matches(text, tokens)
+            visible += show
+            flip = text is not None and show != self._visible[i]
+            # Entries are contiguous, so a run of flips is one tag op
+            if run_start >= 0 and (not flip or show != run_show):
+                self._set_hidden(run_start, i - 1, not run_show)
+                run_start = -1
+            if flip:
+                self._visible[i] = show
+                if run_start < 0:
+                    run_start, run_show = i, show
         return visible
+
+    def _set_hidden(self, first: int, last: int, hidden: bool) -> None:
+        s = self._buf.get_iter_at_mark(self._log_marks[first][0])
+        e = self._buf.get_iter_at_mark(self._log_marks[last][1])
+        if hidden:
+            self._buf.apply_tag_by_name(_TAG_HIDDEN, s, e)
+        else:
+            self._buf.remove_tag_by_name(_TAG_HIDDEN, s, e)
 
     def refresh_highlights(self, highlighters: dict[str, str]) -> None:
         """Re-apply highlight tags without rebuilding buffer."""
@@ -204,12 +212,6 @@ class LogView(Gtk.TextView):
 
     # ── Internal ──────────────────────────────────────────────────────────────
 
-    def _apply_level_colors(self) -> None:
-        """Color [error]/[info]/[warn] tokens using TextIter search."""
-        for keyword, (tag_name, _) in _LEVEL_TAGS.items():
-            needle = f"[{keyword}]"
-            self._apply_tag_for_word(needle, tag_name, case_sensitive=False)
-
     def _apply_highlights_internal(self) -> None:
         if not self._highlighters:
             return
@@ -239,16 +241,3 @@ class LogView(Gtk.TextView):
             self._buf.apply_tag_by_name(tag_name, match_s, match_e)
             cursor = match_e
 
-
-# ── Filter helper ─────────────────────────────────────────────────────────────
-
-def _filter_match(log: dict, tokens: list[str]) -> bool:
-    if not tokens:
-        return True
-    full = (log["time"] + " " + log["msg"]).lower()
-    return all(
-        (t[1:] in full     if t.startswith("+") else
-         t[1:] not in full if t.startswith("-") else
-         t in full)
-        for t in tokens
-    )
