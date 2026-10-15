@@ -214,6 +214,7 @@ class ElkWindow(Gtk.ApplicationWindow):
             ("1h","now-1h"),("3h","now-3h"),("12h","now-12h"),("24h","now-24h"),
         ]:
             btn = Gtk.Button(label=display)
+            btn.add_css_class("btn-preset")
             btn.set_valign(Gtk.Align.CENTER)
             btn.set_can_focus(True)   # Tab-reachable
             btn.connect("clicked", lambda _, v=val: self._set_time(v))

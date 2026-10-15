@@ -77,7 +77,7 @@ scale slider {
 .entry-url:not(:focus-within) > text { filter: blur(5px); }
 .entry-index { min-width: 140px; }
 .entry-limit { min-width:  44px; max-width:  50px; }
-.entry-time  { min-width: 190px; max-width: 190px; }
+.entry-time  { min-width: 120px; max-width: 190px; }
 .entry-filter { min-width: 450px; }
 
 button {
@@ -195,6 +195,14 @@ def apply_scale(display: Gdk.Display, ui_pt: int, log_pt: int) -> None:
     )
 
 
+# Rules that must beat the user's ~/.config/gtk-4.0/gtk.css (USER priority),
+# e.g. Materia's `.toolbar button.text-button { min-width: 48px }`.
+OVERRIDE_CSS = """
+/* time presets 5m…24h — tight, so the toolbar row can shrink */
+.toolbar button.text-button.btn-preset { padding: 0 4px; min-width: 0; }
+"""
+
+
 def install_static(display: Gdk.Display) -> None:
     """Install the static theme CSS once at application startup."""
     provider = Gtk.CssProvider()
@@ -202,4 +210,10 @@ def install_static(display: Gdk.Display) -> None:
     Gtk.StyleContext.add_provider_for_display(
         display, provider,
         Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+    )
+    override = Gtk.CssProvider()
+    override.load_from_data(OVERRIDE_CSS)
+    Gtk.StyleContext.add_provider_for_display(
+        display, override,
+        Gtk.STYLE_PROVIDER_PRIORITY_USER + 1,
     )
