@@ -349,7 +349,7 @@ class ElkWindow(Gtk.ApplicationWindow):
 
         hints = Gtk.Label(
             label="[Ctrl+R] Search  [Ctrl+F] Filter  [Ctrl+S] Query"
-                  "  [Space] HL"
+                  "  [Ctrl+Space] HL"
                   "  [A/D] ±filter  [Shift+A/D] ±query")
         hints.add_css_class("dim")
         bar.append(hints)
