@@ -314,7 +314,7 @@ class ElkWindow(Gtk.ApplicationWindow):
         menu.append_section("Highlight", sec_h)
 
         sec_d = Gio.Menu()
-        sec_d.append("🔍 Показать все поля", "ctx.details")
+        sec_d.append("🔍 Show all fields", "ctx.details")
         menu.append_section("Record", sec_d)
 
         self._ctx_popover = Gtk.PopoverMenu.new_from_model(menu)
@@ -403,7 +403,7 @@ class ElkWindow(Gtk.ApplicationWindow):
         else:
             text = log.get("msg") or "—"
 
-        win = Gtk.Window(title="Запись целиком", transient_for=self, modal=False)
+        win = Gtk.Window(title="Full record", transient_for=self, modal=False)
         win.set_default_size(820, 640)
 
         tv = Gtk.TextView()

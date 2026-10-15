@@ -21,11 +21,7 @@ Features:
 + Auto ⟳ refresh, for those who like to stare at logs
 + Offline filter `+word` / `-word` / `word` (ANDed). Filters faster than HTTP request finishes TLS handshake
 + Highlight any word with own random color, as many as you want
-+ Query history, ↑↓ in history field
-+ Mouse wheel on Limit = ±10
 + Show full record with all fields (JSON), Esc to close
-+ Hotkeys work on russian layout too (ЙЦУКЕН, yes)
-+ Log font and UI scale, for old eyes
 
 Hotkeys:
 
@@ -45,7 +41,7 @@ Right click (on log):
 + `+ filter` / `− filter` — same as `A` / `D`
 + `+ query` / `− query` — same as `Shift+A` / `Shift+D`
 + `Toggle highlight` — same as `Ctrl+Space`
-+ `Показать все поля` — full record under cursor, all fields
++ `Show all fields` — full record under cursor, all fields
 
 Usage:
 
