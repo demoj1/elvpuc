@@ -284,11 +284,11 @@ class ElkWindow(Gtk.ApplicationWindow):
         """
         actions = Gio.SimpleActionGroup()
         specs = [
-            ("filter-inc", lambda: self._try_add_filter(True)),
-            ("filter-exc", lambda: self._try_add_filter(False)),
-            ("query-inc",  lambda: self._try_add_query(True)),
-            ("query-exc",  lambda: self._try_add_query(False)),
-            ("highlight",  lambda: self._try_add_highlight()),
+            ("filter-inc", lambda: self._try_add_filter(True,  from_menu=True)),
+            ("filter-exc", lambda: self._try_add_filter(False, from_menu=True)),
+            ("query-inc",  lambda: self._try_add_query(True,  from_menu=True)),
+            ("query-exc",  lambda: self._try_add_query(False, from_menu=True)),
+            ("highlight",  lambda: self._try_add_highlight(from_menu=True)),
             ("details",    lambda: self._ctx_log and self._show_record_details(self._ctx_log)),
         ]
         for name, cb in specs:
@@ -529,12 +529,8 @@ class ElkWindow(Gtk.ApplicationWindow):
             ]
             self._hl_label.set_markup("Highlights: " + "  ".join(parts))
 
-    def _try_add_highlight(self) -> bool:
-        # Try from the log TextView first, then any focused Label
-        text = self._log_view.get_selected_text()
-        if not text:
-            focused = self.get_focus()
-            text = self._get_label_selection(focused)
+    def _try_add_highlight(self, from_menu: bool = False) -> bool:
+        text = self._focused_selection(from_menu)
         if not text:
             return False
         if text in self._highlighters:
@@ -545,6 +541,18 @@ class ElkWindow(Gtk.ApplicationWindow):
         self._log_view.refresh_highlights(self._highlighters)
         self._update_hl_label()
         return True
+
+    def _focused_selection(self, from_menu: bool = False) -> str | None:
+        """
+        Selected text from the focused widget only (log view or selectable
+        Label).  The log keeps its selection after focus moves to an entry,
+        so without the focus check typing A/D there would add filter tokens.
+        The context menu steals focus to its popover, so it skips the check.
+        """
+        focused = self.get_focus()
+        if from_menu or focused is self._log_view:
+            return self._log_view.get_selected_text()
+        return self._get_label_selection(focused)
 
     @staticmethod
     def _get_label_selection(widget) -> str | None:
@@ -565,12 +573,9 @@ class ElkWindow(Gtk.ApplicationWindow):
 
     # ── Quick filter via A / D ────────────────────────────────────────────────
 
-    def _try_add_query(self, include: bool) -> bool:
+    def _try_add_query(self, include: bool, from_menu: bool = False) -> bool:
         """Shift+A / Shift+D — append +"text" or -"text" to the Lucene query."""
-        text = self._log_view.get_selected_text()
-        if not text:
-            focused = self.get_focus()
-            text = self._get_label_selection(focused)
+        text = self._focused_selection(from_menu)
         if not text:
             return False
 
@@ -587,12 +592,9 @@ class ElkWindow(Gtk.ApplicationWindow):
         self._query_view.grab_focus()
         return True
 
-    def _try_add_filter(self, include: bool) -> bool:
+    def _try_add_filter(self, include: bool, from_menu: bool = False) -> bool:
         """A = append +word, D = append -word to the filter entry."""
-        text = self._log_view.get_selected_text()
-        if not text:
-            focused = self.get_focus()
-            text = self._get_label_selection(focused)
+        text = self._focused_selection(from_menu)
         if not text:
             return False
 
